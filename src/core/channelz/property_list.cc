@@ -14,6 +14,7 @@
 
 #include "src/core/channelz/property_list.h"
 
+#include "google/protobuf/any.upb.h"
 #include "src/core/util/match.h"
 #include "src/proto/grpc/channelz/v2/property_list.upb.h"
 
@@ -186,6 +187,18 @@ void PropertyList::FillUpbProto(grpc_channelz_v2_PropertyList* proto,
   }
 }
 
+void PropertyList::FillAny(google_protobuf_Any* any, upb_Arena* arena) {
+  auto* p = grpc_channelz_v2_PropertyList_new(arena);
+  FillUpbProto(p, arena);
+  size_t length;
+  auto* bytes = grpc_channelz_v2_PropertyList_serialize(p, arena, &length);
+  google_protobuf_Any_set_value(any,
+                                upb_StringView_FromDataAndSize(bytes, length));
+  google_protobuf_Any_set_type_url(
+      any, StdStringToUpbString(
+               "type.googleapis.com/grpc.channelz.v2.PropertyList"));
+}
+
 Json::Object PropertyGrid::TakeJsonObject() {
   Json::Object json;
   Json::Array columns;
@@ -236,6 +249,18 @@ void PropertyGrid::FillUpbProto(grpc_channelz_v2_PropertyGrid* proto,
       }
     }
   }
+}
+
+void PropertyGrid::FillAny(google_protobuf_Any* any, upb_Arena* arena) {
+  auto* p = grpc_channelz_v2_PropertyGrid_new(arena);
+  FillUpbProto(p, arena);
+  size_t length;
+  auto* bytes = grpc_channelz_v2_PropertyGrid_serialize(p, arena, &length);
+  google_protobuf_Any_set_value(any,
+                                upb_StringView_FromDataAndSize(bytes, length));
+  google_protobuf_Any_set_type_url(
+      any, StdStringToUpbString(
+               "type.googleapis.com/grpc.channelz.v2.PropertyGrid"));
 }
 
 void PropertyGrid::SetInternal(absl::string_view column, absl::string_view row,
@@ -330,6 +355,18 @@ void PropertyTable::FillUpbProto(grpc_channelz_v2_PropertyTable* proto,
       }
     }
   }
+}
+
+void PropertyTable::FillAny(google_protobuf_Any* any, upb_Arena* arena) {
+  auto* p = grpc_channelz_v2_PropertyTable_new(arena);
+  FillUpbProto(p, arena);
+  size_t length;
+  auto* bytes = grpc_channelz_v2_PropertyTable_serialize(p, arena, &length);
+  google_protobuf_Any_set_value(any,
+                                upb_StringView_FromDataAndSize(bytes, length));
+  google_protobuf_Any_set_type_url(
+      any, StdStringToUpbString(
+               "type.googleapis.com/grpc.channelz.v2.PropertyTable"));
 }
 
 }  // namespace grpc_core::channelz

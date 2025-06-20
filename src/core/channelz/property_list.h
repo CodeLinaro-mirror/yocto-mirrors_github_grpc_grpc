@@ -26,6 +26,7 @@
 #include "src/core/util/string.h"
 #include "src/core/util/time.h"
 #include "src/core/util/upb_utils.h"
+#include "src/proto/grpc/channelz/v2/channelz.upb.h"
 #include "src/proto/grpc/channelz/v2/property_list.upb.h"
 #include "upb/mem/arena.h"
 
@@ -103,6 +104,7 @@ class PropertyList {
   // TODO(ctiller): remove soon, switch to just FillUpbProto.
   Json::Object TakeJsonObject();
   void FillUpbProto(grpc_channelz_v2_PropertyList* proto, upb_Arena* arena);
+  void FillAny(google_protobuf_Any* any, upb_Arena* arena);
 
  private:
   void SetInternal(absl::string_view key, std::optional<PropertyValue> value);
@@ -140,6 +142,7 @@ class PropertyGrid {
 
   Json::Object TakeJsonObject();
   void FillUpbProto(grpc_channelz_v2_PropertyGrid* proto, upb_Arena* arena);
+  void FillAny(google_protobuf_Any* any, upb_Arena* arena);
 
  private:
   void SetInternal(absl::string_view column, absl::string_view row,
@@ -178,6 +181,7 @@ class PropertyTable {
 
   Json::Object TakeJsonObject();
   void FillUpbProto(grpc_channelz_v2_PropertyTable* proto, upb_Arena* arena);
+  void FillAny(google_protobuf_Any* any, upb_Arena* arena);
 
  private:
   void SetInternal(absl::string_view column, size_t row,
