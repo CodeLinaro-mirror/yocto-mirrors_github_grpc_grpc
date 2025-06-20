@@ -31,6 +31,7 @@ tools/distrib/check_redundant_namespace_qualifiers.py || true
 tools/codegen/core/gen_grpc_tls_credentials_options.py
 tools/distrib/gen_experiments_and_format.sh
 tools/codegen/core/gen_trace_flags.py
+tools/codegen/core/gen_upb_api.sh
 
 # Formatters should always run last
 tools/distrib/clang_format_code.sh
