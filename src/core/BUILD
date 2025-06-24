@@ -755,6 +755,7 @@ grpc_cc_library(
     deps = [
         "activity",
         "arena",
+        "channelz_property_list",
         "check_class_size",
         "construct_destruct",
         "context",
@@ -8869,6 +8870,7 @@ grpc_cc_library(
         "1999",
         "activity",
         "arena",
+        "channelz_property_list",
         "chaotic_good_config",
         "chaotic_good_frame",
         "chaotic_good_frame_header",
