@@ -440,6 +440,7 @@ Json ChannelNode::RenderJson() {
 }
 
 void ChannelNode::AddNodeSpecificData(DataSink sink) {
+  MutexLock lock(&channel_args_mu_);
   sink.AddData("channel", PropertyList()
                               .Set("target", target_)
                               .Set("connectivity_state", connectivity_state()));
@@ -541,7 +542,7 @@ void SubchannelNode::AddNodeSpecificData(DataSink sink) {
                               .Set("target", target_)
                               .Set("connectivity_state", connectivity_state()));
   sink.AddData("call_counts", call_counter_.GetCallCounts().ToPropertyList());
-  sink.AddData("channel_args", channel_args_.ToPropertyList());
+  sink.AddData("channel_args", channel_args().ToPropertyList());
 }
 
 //
@@ -613,7 +614,7 @@ Json ServerNode::RenderJson() {
 
 void ServerNode::AddNodeSpecificData(DataSink sink) {
   sink.AddData("call_counts", call_counter_.GetCallCounts().ToPropertyList());
-  sink.AddData("channel_args", channel_args_.ToPropertyList());
+  sink.AddData("channel_args", channel_args().ToPropertyList());
 }
 
 std::map<intptr_t, WeakRefCountedPtr<ListenSocketNode>>
