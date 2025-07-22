@@ -2559,6 +2559,7 @@ grpc_cc_library(
         "//src/core:thread_quota",
         "//src/core:time",
         "//src/core:useful",
+        "@com_google_protobuf//:any_cc_proto",
     ],
 )
 
@@ -2653,6 +2654,9 @@ grpc_cc_library(
         "absl/strings:cord",
         "protobuf_headers",
         "protobuf",
+        "absl/log:check",
+        "absl/log:absl_check",
+        "absl/strings",
     ],
     public_hdrs = [
         "include/grpc++/impl/codegen/proto_utils.h",
@@ -2666,6 +2670,7 @@ grpc_cc_library(
     deps = [
         "grpc++_config_proto",
         "grpc++_public_hdrs",
+        "grpc_base",
         "grpcpp_status",
     ],
 )
@@ -3084,6 +3089,7 @@ grpc_cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "generic_stub_internal",
+        "grpc++_base",
     ],
 )
 
@@ -4991,6 +4997,7 @@ grpc_cc_library(
         "gpr_platform",
         "grpc++_public_hdrs",
         "grpc_public_hdrs",
+        "@com_google_protobuf//:any_cc_proto",
     ],
 )
 
