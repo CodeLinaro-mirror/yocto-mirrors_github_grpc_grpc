@@ -10554,6 +10554,28 @@ grpc_cc_library(
     ],
 )
 
+grpc_cc_library(
+    name = "channelz_v2tov1_legacy_api",
+    srcs = ["channelz/v2tov1/legacy_api.cc"],
+    hdrs = ["channelz/v2tov1/legacy_api.h"],
+    external_deps = [
+        "absl/log",
+        "absl/status:statusor",
+        "absl/strings",
+    ],
+    deps = [
+        ":channelz_v2tov1_convert",
+        ":experiments",
+        ":json",
+        ":json_reader",
+        ":json_writer",
+        "//:channelz",
+        "//:exec_ctx",
+        "//:gpr",
+        "//:grpc_public_hdrs",
+    ],
+)
+
 ### UPB Targets
 
 grpc_upb_proto_library(
@@ -10884,3 +10906,10 @@ WELL_KNOWN_PROTO_TARGETS = [
 grpc_add_well_known_proto_upb_targets(targets = WELL_KNOWN_PROTO_TARGETS)
 
 grpc_generate_one_off_internal_targets()
+
+cc_library(
+    name = "telemetry/stats_data_google3",
+    srcs = ["telemetry/stats_data_google3.cc"],
+    hdrs = ["telemetry/stats_data_google3.h"],
+    deps = ["//third_party/absl/strings:string_view"],
+)
