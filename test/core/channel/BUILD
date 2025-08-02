@@ -40,13 +40,21 @@ grpc_cc_test(
 grpc_cc_test(
     name = "channel_stack_test",
     srcs = ["channel_stack_test.cc"],
-    external_deps = ["gtest"],
+    external_deps = [
+        "absl/status",
+        "gtest",
+    ],
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        "//:config",
+        "//:exec_ctx",
         "//:gpr",
         "//:grpc",
+        "//:grpc_base",
         "//src/core:channel_args",
+        "//src/core:channel_args_preconditioning",
+        "//src/core:status_helper",
         "//test/core/test_util:grpc_test_util",
     ],
 )
@@ -71,6 +79,8 @@ grpc_cc_test(
     srcs = ["minimal_stack_is_minimal_test.cc"],
     external_deps = [
         "absl/log:check",
+        "absl/memory",
+        "absl/strings",
         "gtest",
     ],
     tags = [
@@ -81,9 +91,17 @@ grpc_cc_test(
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        "//:config",
+        "//:exec_ctx",
         "//:gpr",
         "//:grpc",
+        "//:grpc_base",
+        "//:iomgr",
         "//src/core:channel_args",
+        "//src/core:channel_init",
+        "//src/core:channel_stack_type",
+        "//src/core:experiments",
+        "//src/core:iomgr_fwd",
         "//test/core/test_util:grpc_test_util",
     ],
 )
@@ -97,8 +115,11 @@ grpc_cc_test(
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        "//:call_tracer",
         "//:gpr",
         "//:grpc",
+        "//src/core:arena",
+        "//src/core:channel_args",
         "//test/core/test_util:grpc_test_util",
     ],
 )
