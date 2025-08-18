@@ -61,7 +61,10 @@ grpc_cc_test(
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        "//:event_engine_base_hdrs",
+        "//:gpr",
         "//src/core:posix_event_engine_timer",
+        "//src/core:time",
     ],
 )
 
@@ -69,14 +72,19 @@ grpc_cc_test(
     name = "timer_manager_test",
     srcs = ["timer_manager_test.cc"],
     external_deps = [
+        "absl/functional:any_invocable",
         "absl/log:log",
+        "absl/time",
         "gtest",
     ],
     uses_event_engine = False,
     uses_polling = False,
     deps = [
         "//:exec_ctx",
+        "//:grpc",
         "//src/core:common_event_engine_closures",
+        "//src/core:event_engine_thread_pool",
+        "//src/core:posix_event_engine_timer",
         "//src/core:posix_event_engine_timer_manager",
         "//test/core/test_util:grpc_test_util",
     ],
@@ -88,6 +96,10 @@ grpc_cc_test(
     external_deps = [
         "absl/log:log",
         "gtest",
+        "absl/status:statusor",
+        "absl/strings",
+        "absl/strings:str_format",
+        "absl/status",
     ],
     tags = [
         "no_windows",
@@ -95,12 +107,22 @@ grpc_cc_test(
     uses_event_engine = True,
     uses_polling = True,
     deps = [
+        "//:config_vars",
+        "//:gpr",
+        "//:grpc_base",
+        "//:ref_counted_ptr",
         "//src/core:common_event_engine_closures",
+        "//src/core:dual_ref_counted",
         "//src/core:event_engine_poller",
+        "//src/core:iomgr_port",
+        "//src/core:notification",
         "//src/core:posix_event_engine",
         "//src/core:posix_event_engine_closure",
         "//src/core:posix_event_engine_event_poller",
         "//src/core:posix_event_engine_poller_posix_default",
+        "//src/core:posix_event_engine_wakeup_fd_posix",
+        "//src/core:posix_event_engine_wakeup_fd_posix_pipe",
+        "//src/core:strerror",
         "//test/core/event_engine/posix:posix_engine_test_utils",
         "//test/core/test_util:grpc_test_util",
     ],
@@ -301,6 +323,9 @@ grpc_cc_test(
     uses_event_engine = True,
     uses_polling = True,
     deps = [
+        "//:grpc",
+        "//src/core:experiments",
+        "//src/core:posix_event_engine_file_descriptor_collection",
         "//src/core:posix_event_engine_posix_interface",
         "//test/core/test_util:grpc_test_util",
     ],
@@ -310,7 +335,10 @@ grpc_cc_test(
     name = "poller_fork_test",
     srcs = ["poller_fork_test.cc"],
     external_deps = [
+        "absl/functional:any_invocable",
         "absl/log:log",
+        "absl/status",
+        "absl/strings",
         "gtest",
     ],
     tags = [
@@ -320,8 +348,14 @@ grpc_cc_test(
     uses_polling = True,
     deps = [
         ":posix_engine_test_utils",
+        "//:event_engine_base_hdrs",
         "//:grpc++",
+        "//:grpc++_base",
+        "//src/core:channel_args",
+        "//src/core:channel_args_endpoint_config",
+        "//src/core:event_engine_tcp_socket_utils",
         "//src/core:posix_event_engine",
+        "//src/core:wait_for_single_owner",
         "//test/core/event_engine:event_engine_test_utils",
         "//test/core/test_util:grpc_test_util",
     ],
@@ -351,6 +385,8 @@ grpc_cc_test(
     srcs = ["dns_fork_test.cc"],
     external_deps = [
         "gtest",
+        "absl/status",
+        "absl/status:statusor",
     ],
     tags = [
         "no_windows",
@@ -359,7 +395,11 @@ grpc_cc_test(
     uses_polling = True,
     deps = [
         ":dns_server",
+        "//:event_engine_base_hdrs",
         "//:gpr_platform",
+        "//:grpc",
+        "//src/core:event_engine_tcp_socket_utils",
+        "//src/core:notification",
         "//src/core:posix_event_engine",
         "//test/core/test_util:grpc_test_util",
     ],
