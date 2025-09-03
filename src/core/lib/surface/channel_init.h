@@ -32,6 +32,8 @@
 #include "absl/log/check.h"
 #include "src/core/call/call_filters.h"
 #include "src/core/call/interception_chain.h"
+#include "src/core/channelz/channelz.h"
+#include "src/core/channelz/property_list.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/channel_fwd.h"
 #include "src/core/lib/channel/channel_stack_builder.h"
@@ -395,6 +397,9 @@ class ChannelInit {
   void AddToInterceptionChainBuilder(grpc_channel_stack_type type,
                                      InterceptionChainBuilder& builder) const;
 
+  void AddData(grpc_core::channelz::DataSink sink,
+               grpc_channel_stack_type type) const;
+
  private:
   // The type of object returned by a filter's Create method.
   template <typename T>
@@ -435,6 +440,7 @@ class ChannelInit {
     std::vector<Filter> fused_filters;
     std::vector<Filter> terminators;
     std::vector<PostProcessor> post_processors;
+    channelz::PropertyTable filter_ordering;
   };
 
   StackConfig stack_configs_[GRPC_NUM_CHANNEL_STACK_TYPES];
@@ -443,7 +449,8 @@ class ChannelInit {
   SortFilterRegistrationsByDependencies(
       const std::vector<std::unique_ptr<FilterRegistration>>&
           filter_registrations,
-      grpc_channel_stack_type type);
+      grpc_channel_stack_type type,
+      channelz::PropertyTable& filter_ordering);
 
   static std::vector<Filter> SortFusedFilterRegistrations(
       const std::vector<std::unique_ptr<FilterRegistration>>&
