@@ -32,6 +32,7 @@
 #include "src/core/call/call_spine.h"
 #include "src/core/call/message.h"
 #include "src/core/call/metadata_batch.h"
+#include "src/core/ext/transport/chttp2/transport/flow_control.h"
 #include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/ext/transport/chttp2/transport/header_assembler.h"
 #include "src/core/ext/transport/chttp2/transport/http2_settings.h"
@@ -51,6 +52,7 @@
 #include "src/core/lib/promise/promise.h"
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/lib/resource_quota/arena.h"
+#include "src/core/lib/resource_quota/resource_quota.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/lib/slice/slice_buffer.h"
 #include "src/core/lib/transport/promise_endpoint.h"
@@ -880,12 +882,19 @@ Http2ClientTransport::Http2ClientTransport(
       enable_preferred_rx_crypto_frame_advertisement_(
           channel_args
               .GetBool(GRPC_ARG_EXPERIMENTAL_HTTP2_PREFERRED_CRYPTO_FRAME_SIZE)
-              .value_or(false)) {
+              .value_or(false)),
+      memory_owner_(channel_args.GetObject<ResourceQuota>()
+                        ->memory_quota()
+                        ->CreateMemoryOwner()),
+      flow_control_(
+          "PH2_Client",
+          channel_args.GetBool(GRPC_ARG_HTTP2_BDP_PROBE).value_or(true),
+          &memory_owner_) {
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport Constructor Begin";
 
   InitLocalSettings(settings_.mutable_local(), /*is_client=*/true);
   ReadSettingsFromChannelArgs(channel_args, settings_.mutable_local(),
-                              /*is_client=*/true);
+                              flow_control_, /*is_client=*/true);
 
   // Initialize the general party and write party.
   auto general_party_arena = SimpleArenaAllocator(0)->MakeArena();
@@ -982,7 +991,7 @@ void Http2ClientTransport::CloseStream(uint32_t stream_id, absl::Status status,
 
 void Http2ClientTransport::CloseTransport() {
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport::CloseTransport";
-
+  memory_owner_.Reset();
   // This is the only place where the general_party_ is
   // reset.
   general_party_.reset();
@@ -1112,7 +1121,8 @@ bool Http2ClientTransport::MakeStream(CallHandler call_handler,
       stream_id,
       MakeRefCounted<Stream>(std::move(call_handler), stream_id,
                              settings_.peer().allow_true_binary_metadata(),
-                             settings_.acked().allow_true_binary_metadata()));
+                             settings_.acked().allow_true_binary_metadata(),
+                             flow_control_));
   return true;
 }
 
