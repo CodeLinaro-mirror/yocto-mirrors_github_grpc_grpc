@@ -21,8 +21,10 @@
 #include <limits>
 
 #include "absl/base/thread_annotations.h"
+#include "absl/log/check.h"
 #include "absl/log/log.h"
 #include "absl/strings/str_format.h"
+#include "src/core/channelz/property_list.h"
 #include "src/core/lib/event_engine/event_engine_context.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
 #include "src/core/lib/promise/activity.h"
@@ -226,7 +228,8 @@ channelz::PropertyList Party::ChannelzPropertiesLocked() {
         for (size_t i = 0; i < party_detail::kMaxParticipants; i++) {
           if (auto* p = participants_[i].load(std::memory_order_acquire);
               p != nullptr) {
-            table.AppendRow(p->ChannelzProperties());
+            table.AppendRow(channelz::PropertyList().Set(
+                "participant", p->ChannelzProperties()));
           }
         }
         return table;
