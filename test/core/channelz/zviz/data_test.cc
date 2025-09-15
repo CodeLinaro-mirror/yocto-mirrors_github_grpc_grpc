@@ -45,6 +45,11 @@ void FormatDatasDoesNotCrash(
 }
 FUZZ_TEST(DataTest, FormatDatasDoesNotCrash);
 
+void FormatPromiseDoesNotCrash(grpc::channelz::v2::Promise promise) {
+  Format(promise);
+}
+FUZZ_TEST(DataTest, FormatPromiseDoesNotCrash);
+
 void ExpectDataTransformsTo(std::string proto, std::string expected) {
   EnvironmentFake env({});
   std::vector<std::string> lines;
@@ -320,6 +325,240 @@ TEST(DataTest, NestedPropertyListContainingPropertyTableThenSibling) {
 [0] [0] [1,1] APPEND_COLUMN
 [0] [0] [1,1] APPEND_TEXT value 1
 [0] [0] NEW_ROW)");
+}
+
+void ExpectPromiseTransformsTo(std::string proto, std::string expected) {
+  grpc::channelz::v2::Promise promise;
+  CHECK(google::protobuf::TextFormat::ParseFromString(proto, &promise));
+  EXPECT_EQ(expected, Format(promise)) << "PROMISE: " << proto;
+}
+
+TEST(PromiseTest, Seq) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        seq_promise {
+          steps { factory: "step1" }
+          steps { factory: "step2" }
+        }
+      )pb",
+      R"(Seq(
+  step1,
+  step2,
+))");
+}
+
+TEST(PromiseTest, SeqWithActive) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        seq_promise {
+          steps { factory: "step1" }
+          steps {
+            factory: "(lambda at path/to/some_file.cc:123:45)"
+            polling_promise { unknown_promise: "active" }
+          }
+        }
+      )pb",
+      R"(Seq(
+  step1,
+  🟢 some_file.cc:123
+    Unknown(active),
+))");
+}
+
+TEST(PromiseTest, Join) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        join_promise {
+          branches { factory: "branch1" }
+          branches { factory: "branch2" }
+        }
+      )pb",
+      R"(Join(
+  branch1,
+  branch2,
+))");
+}
+
+TEST(PromiseTest, JoinWithActiveAndComplete) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        join_promise {
+          branches { factory: "branch1" result: "done" }
+          branches {
+            factory: "branch2"
+            polling_promise { unknown_promise: "active" }
+          }
+        }
+      )pb",
+      R"(Join(
+  branch1 ✅,
+  🟢 branch2
+    Unknown(active),
+))");
+}
+
+TEST(PromiseTest, Map) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        map_promise {
+          promise { unknown_promise: "the_promise" }
+          map_fn: "the_map_fn"
+        }
+      )pb",
+      R"(Map(
+  Unknown(the_promise),
+  the_map_fn
+))");
+}
+
+TEST(PromiseTest, TrySeq) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        seq_promise {
+          kind: TRY
+          steps { factory: "step1" }
+          steps { factory: "step2" }
+        }
+      )pb",
+      R"(TrySeq(
+  step1,
+  step2,
+))");
+}
+
+TEST(PromiseTest, TryJoin) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        join_promise {
+          kind: TRY
+          branches { factory: "branch1" }
+          branches { factory: "branch2" }
+        }
+      )pb",
+      R"(TryJoin(
+  branch1,
+  branch2,
+))");
+}
+
+TEST(PromiseTest, Loop) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        loop_promise {
+          loop_factory: "loop_factory"
+          promise { unknown_promise: "body" }
+        }
+      )pb",
+      R"(Loop(
+  loop_factory,
+  Unknown(body)
+))");
+}
+
+TEST(PromiseTest, If) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        if_promise {
+          condition: true
+          true_factory: "true_factory"
+          false_factory: "false_factory"
+          promise { unknown_promise: "branch" }
+        }
+      )pb",
+      R"(If(true, true_factory, false_factory,
+  Unknown(branch)
+))");
+}
+
+TEST(PromiseTest, Race) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        race_promise {
+          children { unknown_promise: "child1" }
+          children { unknown_promise: "child2" }
+        }
+      )pb",
+      R"(Race(
+  Unknown(child1),
+  Unknown(child2),
+))");
+}
+
+TEST(PromiseTest, UnknownPromiseLambda) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        unknown_promise: "(lambda at path/to/some_file.cc:123:45)"
+      )pb",
+      R"(some_file.cc:123)");
+}
+
+TEST(PromiseTest, UnknownPromisePlain) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        unknown_promise: "plain"
+      )pb",
+      R"(Unknown(plain))");
+}
+
+TEST(PromiseTest, Custom) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        custom_promise {
+          type: "MyCustomPromise"
+          properties {
+            properties {
+              key: "foo"
+              value { string_value: "bar" }
+            }
+          }
+        }
+      )pb",
+      R"(MyCustomPromise foo:bar)");
+}
+
+TEST(PromiseTest, CustomMultiline) {
+  ExpectPromiseTransformsTo(
+      R"pb(
+        custom_promise {
+          type: "MyCustomPromise"
+          properties {
+            properties {
+              key: "foo"
+              value { string_value: "bar" }
+            }
+            properties {
+              key: "baz"
+              value {
+                string_value: "this is a very long string that should cause multiline formatting"
+              }
+            }
+          }
+        }
+      )pb",
+      R"(MyCustomPromise {
+    foo: bar
+    baz: this is a very long string that should cause multiline formatting
+  })");
+}
+
+TEST(DataTest, PromiseInData) {
+  ExpectDataTransformsTo(
+      R"pb(
+        name: "some_promise"
+        value {
+          [type.googleapis.com/grpc.channelz.v2.Promise] {
+            map_promise {
+              promise { unknown_promise: "the_promise" }
+              map_fn: "the_map_fn"
+            }
+          }
+        }
+      )pb",
+      R"([0] DATA some_promise type.googleapis.com/grpc.channelz.v2.Promise
+[0] APPEND_TEXT data Map(
+  Unknown(the_promise),
+  the_map_fn
+))");
 }
 
 }  // namespace

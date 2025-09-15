@@ -10694,6 +10694,7 @@ grpc_cc_library(
         "zviz_environment",
         "zviz_layout",
         "//src/proto/grpc/channelz/v2:channelz_cc_proto",
+        "//src/proto/grpc/channelz/v2:promise_cc_proto",
         "//src/proto/grpc/channelz/v2:property_list_cc_proto",
     ],
 )
