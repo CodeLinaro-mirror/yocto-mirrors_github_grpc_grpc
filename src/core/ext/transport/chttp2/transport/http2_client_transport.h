@@ -145,6 +145,10 @@ class Http2ClientTransport final : public ClientTransport {
     return general_party_->Spawn(name, std::move(factory), [](auto) {});
   }
 
+  bool IsTransportFlowControlAvailable() {
+    return flow_control_.remote_window() > 0;
+  }
+
  private:
   // Promise factory for processing each type of frame
   Http2Status ProcessHttp2DataFrame(Http2DataFrame frame);

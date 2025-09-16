@@ -430,6 +430,21 @@ Http2Status Http2ClientTransport::ProcessHttp2WindowUpdateFrame(
       << "Http2Transport ProcessHttp2WindowUpdateFrame Promise { "
          " stream_id="
       << frame.stream_id << ", increment=" << frame.increment << "}";
+  if (frame.stream_id != 0) {
+    RefCountedPtr<Stream> stream = LookupStream(frame.stream_id);
+    if (stream != nullptr) {
+      grpc_core::chttp2::StreamFlowControl::OutgoingUpdateContext fc_update(
+          &stream->flow_control);
+      fc_update.RecvUpdate(frame.increment);
+    }
+  } else {
+    grpc_core::chttp2::TransportFlowControl::OutgoingUpdateContext fc_update(
+        &flow_control_);
+    fc_update.RecvUpdate(frame.increment);
+    if (fc_update.Finish() == grpc_core::chttp2::StallEdge::kUnstalled) {
+      // TODO(tjagtap) [PH2][P1] Signal the multiplexer loop
+    }
+  }
   return Http2Status::Ok();
 }
 
@@ -730,7 +745,7 @@ auto Http2ClientTransport::MultiplexerLoop() {
                            << " max_write_size_=" << self->GetMaxWriteSize();
     return TrySeq(
         self->writable_stream_list_.WaitForReady(
-            /*transport_tokens_available*/ true),
+            self->IsTransportFlowControlAvailable()),
         [self]() {
           // TODO(akshitpatel) : [PH2][P2] : Return an `important` tag from
           // WriteControlFrames() to indicate if we should do a separate write
@@ -759,7 +774,7 @@ auto Http2ClientTransport::MultiplexerLoop() {
             // transport flow control is implemented.
             std::optional<uint32_t> stream_id =
                 self->writable_stream_list_.ImmediateNext(
-                    /*transport_tokens_available*/ true);
+                    self->IsTransportFlowControlAvailable());
             if (!stream_id.has_value()) {
               GRPC_HTTP2_CLIENT_DLOG
                   << "Http2ClientTransport MultiplexerLoop "
