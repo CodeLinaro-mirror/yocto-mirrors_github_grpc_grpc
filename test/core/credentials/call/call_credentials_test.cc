@@ -25,7 +25,7 @@
 #include <grpc/support/port_platform.h>
 #include <grpc/support/string_util.h>
 #include <grpc/support/time.h>
-#include <gtest/gtest.h>
+#include "gtest/gtest.h"
 #include <openssl/rsa.h>
 #include <stdlib.h>
 #include <string.h>
