@@ -31,6 +31,7 @@
 #include "absl/strings/string_view.h"
 #include "src/core/call/call_spine.h"
 #include "src/core/call/message.h"
+#include "src/core/call/metadata.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/ext/transport/chttp2/transport/flow_control.h"
 #include "src/core/ext/transport/chttp2/transport/flow_control_manager.h"
@@ -855,6 +856,21 @@ auto Http2ClientTransport::MultiplexerLoop() {
                 << stream->GetStreamId()
                 << " is_closed_for_writes = " << stream->IsClosedForWrites();
 
+            if (stream->GetStreamId() == kInvalidStreamId) {
+              if (!self->AssignStreamIdAndAddToStreamList(stream)) {
+                GRPC_HTTP2_CLIENT_DLOG
+                    << "Http2ClientTransport MultiplexerLoop "
+                       "Failed to assign stream id and add to stream list for "
+                       "stream: "
+                    << stream.get() << " closing this stream.";
+                self->BeginCloseStream(
+                    stream, /*reset_stream_error_code=*/std::nullopt,
+                    CancelledServerMetadataFromStatus(
+                        absl::CancelledError("Failed to get next stream id")));
+                continue;
+              }
+            }
+
             if (GPR_LIKELY(!stream->IsClosedForWrites())) {
               auto stream_frames = self->DequeueStreamFrames(stream);
               if (GPR_UNLIKELY(!stream_frames.ok())) {
@@ -909,6 +925,27 @@ auto Http2ClientTransport::OnMultiplexerLoopEnded() {
       };
 }
 
+bool Http2ClientTransport::AssignStreamIdAndAddToStreamList(
+    RefCountedPtr<Stream> stream) {
+  std::optional<uint32_t> next_stream_id = NextStreamId();
+  if (!next_stream_id.has_value()) {
+    GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport MultiplexerLoop "
+                              "Failed to get next stream id for stream: "
+                           << stream.get();
+    return false;
+  }
+  GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport MultiplexerLoop "
+                            "Assigned stream id: "
+                         << next_stream_id.value() << " to stream: "
+                         << stream.get();
+  stream->SetStreamId(next_stream_id.value());
+  {
+    MutexLock lock(&transport_mutex_);
+    stream_list_.emplace(next_stream_id.value(), stream);
+  }
+  return true;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Constructor Destructor
 
@@ -919,7 +956,7 @@ Http2ClientTransport::Http2ClientTransport(
     : channelz::DataSource(http2::CreateChannelzSocketNode(
           endpoint.GetEventEngineEndpoint(), channel_args)),
       endpoint_(std::move(endpoint)),
-      stream_id_mutex_(/*Initial Stream Id*/ 1),
+      next_stream_id_(1),
       should_reset_ping_clock_(false),
       incoming_header_in_progress_(false),
       incoming_header_end_stream_(false),
@@ -1307,37 +1344,22 @@ bool Http2ClientTransport::SetOnDone(CallHandler call_handler,
 }
 
 std::optional<RefCountedPtr<Stream>> Http2ClientTransport::MakeStream(
-    CallHandler call_handler,
-    InterActivityMutex<uint32_t>::Lock& next_stream_id_lock) {
+    CallHandler call_handler) {
   // https://datatracker.ietf.org/doc/html/rfc9113#name-stream-identifiers
-  // TODO(akshitpatel) : [PH2][P1] : Probably do not need this lock. This
-  // function is always called under the stream_id_mutex_. The issue is the
-  // OnDone needs to be synchronous and hence InterActivityMutex might not be
-  // an option to protect the stream_list_.
-  MutexLock lock(&transport_mutex_);
-
-  std::optional<uint32_t> stream_id = NextStreamId(next_stream_id_lock);
-  if (!stream_id.has_value()) {
-    return std::nullopt;
-  }
-
   RefCountedPtr<Stream> stream = MakeRefCounted<Stream>(
-      call_handler, stream_id.value(),
-      settings_.peer().allow_true_binary_metadata(),
+      call_handler, settings_.peer().allow_true_binary_metadata(),
       settings_.acked().allow_true_binary_metadata(), flow_control_);
   const bool on_done_added = SetOnDone(call_handler, stream);
   if (!on_done_added) return std::nullopt;
-  stream_list_.emplace(stream_id.value(), stream);
   return stream;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Call Spine related operations
 
-auto Http2ClientTransport::CallOutboundLoop(
-    CallHandler call_handler, RefCountedPtr<Stream> stream,
-    InterActivityMutex<uint32_t>::Lock lock /* Locked stream_id_mutex */,
-    ClientMetadataHandle metadata) {
+auto Http2ClientTransport::CallOutboundLoop(CallHandler call_handler,
+                                            RefCountedPtr<Stream> stream,
+                                            ClientMetadataHandle metadata) {
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport CallOutboundLoop";
   GRPC_DCHECK(stream != nullptr);
 
@@ -1383,7 +1405,7 @@ auto Http2ClientTransport::CallOutboundLoop(
       "Ph2CallOutboundLoop",
       TrySeq(
           send_initial_metadata(),
-          [call_handler, send_message, lock = std::move(lock)]() {
+          [call_handler, send_message]() {
             // The lock will be released once the promise is constructed from
             // this factory. ForEach will be polled after the lock is
             // released.
@@ -1408,43 +1430,38 @@ void Http2ClientTransport::StartCall(CallHandler call_handler) {
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport StartCall Begin";
   call_handler.SpawnGuarded(
       "OutboundLoop",
-      TrySeq(
-          call_handler.PullClientInitialMetadata(),
-          [self = RefAsSubclass<Http2ClientTransport>()](
-              ClientMetadataHandle metadata) {
-            // Lock the stream_id_mutex_
-            return Staple(self->stream_id_mutex_.Acquire(),
-                          std::move(metadata));
-          },
-          [self = RefAsSubclass<Http2ClientTransport>(),
-           call_handler](auto args /* Locked stream_id_mutex */) mutable {
-            // For a gRPC Client, we only need to check the
-            // MAX_CONCURRENT_STREAMS setting compliance at the time of
-            // sending (that is write path). A gRPC Client will never
-            // receive a stream initiated by a server, so we dont have to
-            // check MAX_CONCURRENT_STREAMS compliance on the Read-Path.
-            //
-            // TODO(tjagtap) : [PH2][P1] Check for MAX_CONCURRENT_STREAMS
-            // sent by peer before making a stream. Decide behaviour if we are
-            // crossing this threshold.
-            //
-            // TODO(tjagtap) : [PH2][P1] : For a server we will have to do
-            // this for incoming streams only. If a server receives more streams
-            // from a client than is allowed by the clients settings, whether or
-            // not we should fail is debatable.
-            std::optional<RefCountedPtr<Stream>> stream =
-                self->MakeStream(call_handler, std::get<0>(args));
-            return If(
-                stream.has_value(),
-                [self, call_handler, stream, args = std::move(args)]() mutable {
-                  return Map(
-                      self->CallOutboundLoop(call_handler, stream.value(),
-                                             std::move(std::get<0>(args)),
-                                             std::move(std::get<1>(args))),
-                      [](absl::Status status) { return status; });
-                },
-                []() { return absl::InternalError("Failed to make stream"); });
-          }));
+      TrySeq(call_handler.PullClientInitialMetadata(),
+             [self = RefAsSubclass<Http2ClientTransport>(),
+              call_handler](ClientMetadataHandle metadata) mutable {
+               // For a gRPC Client, we only need to check the
+               // MAX_CONCURRENT_STREAMS setting compliance at the time of
+               // sending (that is write path). A gRPC Client will never
+               // receive a stream initiated by a server, so we dont have to
+               // check MAX_CONCURRENT_STREAMS compliance on the Read-Path.
+               //
+               // TODO(tjagtap) : [PH2][P1] Check for MAX_CONCURRENT_STREAMS
+               // sent by peer before making a stream. Decide behaviour if we
+               // are crossing this threshold.
+               //
+               // TODO(tjagtap) : [PH2][P1] : For a server we will have to do
+               // this for incoming streams only. If a server receives more
+               // streams from a client than is allowed by the clients settings,
+               // whether or not we should fail is debatable.
+               std::optional<RefCountedPtr<Stream>> stream =
+                   self->MakeStream(call_handler);
+               return If(
+                   stream.has_value(),
+                   [self, call_handler, stream,
+                    initial_metadata = std::move(metadata)]() mutable {
+                     return Map(
+                         self->CallOutboundLoop(call_handler, stream.value(),
+                                                std::move(initial_metadata)),
+                         [](absl::Status status) { return status; });
+                   },
+                   []() {
+                     return absl::InternalError("Failed to make stream");
+                   });
+             }));
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport StartCall End";
 }
 
