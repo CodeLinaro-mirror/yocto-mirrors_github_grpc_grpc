@@ -130,7 +130,6 @@ class Http2ClientTransport final : public ClientTransport,
   void StopConnectivityWatch(ConnectivityStateWatcherInterface* watcher);
 
   void Orphan() override;
-  void AbortWithError();
 
   RefCountedPtr<channelz::SocketNode> GetSocketNode() const override {
     return const_cast<channelz::BaseNode*>(
