@@ -16,6 +16,7 @@
 //
 //
 
+#include <grpc/event_engine/memory_allocator.h>
 #include <grpc/grpc.h>
 #include <grpc/impl/connectivity_state.h>
 #include <grpc/slice.h>
@@ -66,6 +67,11 @@ Channel::~Channel() {
     }
   }
 }
+
+grpc_event_engine::experimental::MemoryAllocator* Channel::memory_allocator()
+    const {
+    return grpc_core::Channel::FromC(c_channel_)->memory_allocator();
+  }
 
 namespace {
 

@@ -24,6 +24,8 @@
 #include <grpcpp/support/status.h>
 #include <grpcpp/support/time.h>
 
+#include "grpc/event_engine/memory_allocator.h"
+
 namespace grpc {
 template <class R>
 class ClientReader;
@@ -100,6 +102,11 @@ class ChannelInterface {
       if (!WaitForStateChange(state, deadline)) return false;
     }
     return true;
+  }
+
+  virtual grpc_event_engine::experimental::MemoryAllocator* memory_allocator()
+      const {
+    return nullptr;
   }
 
  private:
