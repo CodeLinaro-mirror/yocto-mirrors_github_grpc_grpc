@@ -10506,6 +10506,7 @@ grpc_cc_library(
     ],
     deps = [
         "1999",
+        "grpc_check",
         "if",
         "inter_activity_latch",
         "latch",
@@ -10540,6 +10541,7 @@ grpc_cc_library(
     deps = [
         "1999",
         "all_ok",
+        "grpc_check",
         "if",
         "latch",
         "loop",
@@ -10564,6 +10566,7 @@ grpc_cc_library(
     ],
     deps = [
         "activity",
+        "grpc_check",
         "http2_status",
         "if",
         "race",
