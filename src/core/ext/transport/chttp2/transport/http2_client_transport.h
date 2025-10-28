@@ -162,6 +162,7 @@ class Http2ClientTransport final : public ClientTransport,
   }
 
   void AddData(channelz::DataSink sink) override;
+  void SpawnAddChannelzData(channelz::DataSink sink);
 
   auto TestOnlyTriggerWriteCycle() {
     return Immediate(writable_stream_list_.ForceReadyForWrite());
@@ -252,6 +253,7 @@ class Http2ClientTransport final : public ClientTransport,
                               RefCountedPtr<Stream> stream);
 
   RefCountedPtr<Party> general_party_;
+  std::shared_ptr<grpc_event_engine::experimental::EventEngine> event_engine_;
 
   PromiseEndpoint endpoint_;
   Http2SettingsManager settings_;
