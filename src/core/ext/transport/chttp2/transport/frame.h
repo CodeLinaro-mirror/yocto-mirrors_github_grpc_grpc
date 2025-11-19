@@ -309,6 +309,9 @@ inline constexpr absl::string_view kSettingsStreamIdMustBeZero =
     "RFC9113: If an endpoint receives a SETTINGS frame whose Stream "
     "Identifier field is anything other than 0x00, the endpoint MUST respond "
     "with a connection error";
+inline constexpr absl::string_view kUnknownStreamId =
+    "RFC9113: An endpoint that receives an unexpected stream identifier MUST "
+    "respond with a connection error";
 
 // Frame length related errors
 inline constexpr absl::string_view kRstStreamLength4 =

@@ -349,6 +349,7 @@ class Http2ClientTransport final : public ClientTransport,
   absl::Status AssignStreamId(RefCountedPtr<Stream> stream);
 
   void AddToStreamList(RefCountedPtr<Stream> stream);
+  Http2Status ValidateStreamId(uint32_t stream_id);
 
   Mutex transport_mutex_;
 

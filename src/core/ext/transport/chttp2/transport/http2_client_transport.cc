@@ -229,6 +229,21 @@ void Http2ClientTransport::Orphan() {
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport Orphan End";
 }
 
+Http2Status Http2ClientTransport::ValidateStreamId(const uint32_t stream_id) {
+  // Received stream id should not be greater than the last stream id sent by
+  // the client.
+  if (stream_id >= PeekNextStreamId()) {
+    GRPC_HTTP2_CLIENT_DLOG
+        << "Http2ClientTransport ProcessHttp2DataFrame Unknown Stream ID: "
+        << stream_id << " Last Stream ID: "
+        << ((PeekNextStreamId() > 1) ? PeekNextStreamId() - 2 : 1);
+    return Http2Status::Http2ConnectionError(
+        Http2ErrorCode::kProtocolError, std::string(RFC9113::kUnknownStreamId));
+  }
+
+  return Http2Status::Ok();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Processing each type of frame
 
@@ -243,6 +258,14 @@ Http2Status Http2ClientTransport::ProcessHttp2DataFrame(Http2DataFrame frame) {
   // TODO(akshitpatel) : [PH2][P3] : Investigate if we should do this even if
   // the function returns a non-ok status?
   ping_manager_.ReceivedDataFrame();
+
+  Http2Status validate_stream_id_status = ValidateStreamId(frame.stream_id);
+  if (!validate_stream_id_status.IsOk()) {
+    GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport ProcessHttp2DataFrame "
+                              "Validate Stream ID Failed with status: "
+                           << validate_stream_id_status;
+    return validate_stream_id_status;
+  }
 
   // Lookup stream
   GRPC_HTTP2_CLIENT_DLOG
@@ -269,7 +292,8 @@ Http2Status Http2ClientTransport::ProcessHttp2DataFrame(Http2DataFrame frame) {
     return Http2Status::Ok();
   }
 
-  if (stream->GetStreamState() == HttpStreamState::kHalfClosedRemote) {
+  HttpStreamState stream_state = stream->GetStreamState();
+  if (stream_state == HttpStreamState::kHalfClosedRemote) {
     return Http2Status::Http2StreamError(
         Http2ErrorCode::kStreamClosed,
         std::string(RFC9113::kHalfClosedRemoteState));
@@ -330,10 +354,26 @@ Http2Status Http2ClientTransport::ProcessHttp2HeaderFrame(
       << frame.stream_id << ", end_headers=" << frame.end_headers
       << ", end_stream=" << frame.end_stream
       << ", payload=" << frame.payload.JoinIntoString() << " }";
-  ping_manager_.ReceivedDataFrame();
+  // State update MUST happen before processing the frame.
   incoming_header_in_progress_ = !frame.end_headers;
   incoming_header_stream_id_ = frame.stream_id;
   incoming_header_end_stream_ = frame.end_stream;
+
+  ping_manager_.ReceivedDataFrame();
+
+  Http2Status validate_stream_id_status = ValidateStreamId(frame.stream_id);
+  if (!validate_stream_id_status.IsOk()) {
+    GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport ProcessHttp2HeaderFrame "
+                              "Validate Stream ID Failed with status: "
+                           << validate_stream_id_status;
+
+    GRPC_DCHECK(validate_stream_id_status.GetType() ==
+                Http2Status::Http2ErrorType::kConnectionError);
+    return ParseAndDiscardHeaders(std::move(frame.payload),
+                                  /*is_initial_metadata=*/!frame.end_stream,
+                                  frame.end_headers, frame.stream_id, nullptr,
+                                  std::move(validate_stream_id_status));
+  }
 
   RefCountedPtr<Stream> stream = LookupStream(frame.stream_id);
   if (stream == nullptr) {
@@ -353,7 +393,8 @@ Http2Status Http2ClientTransport::ProcessHttp2HeaderFrame(
                                   /*stream=*/nullptr, Http2Status::Ok());
   }
 
-  if (stream->GetStreamState() == HttpStreamState::kHalfClosedRemote) {
+  HttpStreamState stream_state = stream->GetStreamState();
+  if (stream_state == HttpStreamState::kHalfClosedRemote) {
     return ParseAndDiscardHeaders(
         std::move(frame.payload),
         /*is_initial_metadata=*/!frame.end_stream, frame.end_headers,
@@ -442,6 +483,15 @@ Http2Status Http2ClientTransport::ProcessHttp2RstStreamFrame(
   GRPC_HTTP2_CLIENT_DLOG
       << "Http2ClientTransport ProcessHttp2RstStreamFrame { stream_id="
       << frame.stream_id << ", error_code=" << frame.error_code << " }";
+
+  Http2Status validate_stream_id_status = ValidateStreamId(frame.stream_id);
+  if (!validate_stream_id_status.IsOk()) {
+    GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport ProcessHttp2RstFrame "
+                              "Validate Stream ID Failed with status: "
+                           << validate_stream_id_status;
+    return validate_stream_id_status;
+  }
+
   Http2ErrorCode error_code = FrameErrorCodeToHttp2ErrorCode(frame.error_code);
   absl::Status status = absl::Status(ErrorCodeToAbslStatusCode(error_code),
                                      "Reset stream frame received.");
@@ -631,6 +681,16 @@ Http2Status Http2ClientTransport::ProcessHttp2WindowUpdateFrame(
       << "Http2ClientTransport ProcessHttp2WindowUpdateFrame Promise { "
          " stream_id="
       << frame.stream_id << ", increment=" << frame.increment << "}";
+
+  Http2Status validate_stream_id_status = ValidateStreamId(frame.stream_id);
+  if (!validate_stream_id_status.IsOk()) {
+    GRPC_HTTP2_CLIENT_DLOG
+        << "Http2ClientTransport ProcessHttp2WindowUpdateFrame "
+           "Validate Stream ID Failed with status: "
+        << validate_stream_id_status;
+    return validate_stream_id_status;
+  }
+
   RefCountedPtr<Stream> stream = nullptr;
   if (frame.stream_id != 0) {
     stream = LookupStream(frame.stream_id);
@@ -651,7 +711,25 @@ Http2Status Http2ClientTransport::ProcessHttp2ContinuationFrame(
          "stream_id="
       << frame.stream_id << ", end_headers=" << frame.end_headers
       << ", payload=" << frame.payload.JoinIntoString() << " }";
+
+  // State update MUST happen before processing the frame.
   incoming_header_in_progress_ = !frame.end_headers;
+
+  Http2Status validate_stream_id_status = ValidateStreamId(frame.stream_id);
+  if (!validate_stream_id_status.IsOk()) {
+    GRPC_HTTP2_CLIENT_DLOG
+        << "Http2ClientTransport ProcessHttp2ContinuationFrame "
+           "Validate Stream ID Failed with status: "
+        << validate_stream_id_status;
+
+    GRPC_DCHECK(validate_stream_id_status.GetType() ==
+                Http2Status::Http2ErrorType::kConnectionError);
+    return ParseAndDiscardHeaders(
+        std::move(frame.payload),
+        /*is_initial_metadata=*/!incoming_header_end_stream_, frame.end_headers,
+        frame.stream_id, nullptr, std::move(validate_stream_id_status));
+  }
+
   RefCountedPtr<Stream> stream = LookupStream(frame.stream_id);
   if (stream == nullptr) {
     // TODO(tjagtap) : [PH2][P3] : Implement this.
@@ -668,7 +746,8 @@ Http2Status Http2ClientTransport::ProcessHttp2ContinuationFrame(
         Http2Status::Ok());
   }
 
-  if (stream->GetStreamState() == HttpStreamState::kHalfClosedRemote) {
+  HttpStreamState stream_state = stream->GetStreamState();
+  if (stream_state == HttpStreamState::kHalfClosedRemote) {
     return ParseAndDiscardHeaders(
         std::move(frame.payload),
         /*is_initial_metadata=*/!incoming_header_end_stream_,
