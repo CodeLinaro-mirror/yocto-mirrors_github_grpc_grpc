@@ -27,7 +27,6 @@
 
 #include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/ext/transport/chttp2/transport/http2_settings_promises.h"
-#include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/event_engine/default_event_engine.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
 #include "src/core/lib/promise/party.h"
@@ -97,8 +96,7 @@ TEST_F(SettingsPromiseManagerTest, NoTimeoutOneSetting) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(ChannelArgs(),
-                             Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification;
   party->Spawn(
       "SettingsPromiseManagerTest",
@@ -117,8 +115,7 @@ TEST_F(SettingsPromiseManagerTest, NoTimeoutThreeSettings) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(ChannelArgs(),
-                             Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification;
   party->Spawn(
       "SettingsPromiseManagerTest",
@@ -141,8 +138,7 @@ TEST_F(SettingsPromiseManagerTest, NoTimeoutThreeSettingsDelayed) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(ChannelArgs(),
-                             Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification;
   party->Spawn(
       "SettingsPromiseManagerTest",
@@ -168,8 +164,7 @@ TEST_F(SettingsPromiseManagerTest, NoTimeoutOneSettingRareOrder) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(ChannelArgs(),
-                             Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification;
   party->Spawn(
       "SettingsPromiseManagerTest",
@@ -191,8 +186,7 @@ TEST_F(SettingsPromiseManagerTest, NoTimeoutThreeSettingsRareOrder) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(ChannelArgs(),
-                             Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification;
   party->Spawn(
       "SettingsPromiseManagerTest",
@@ -213,8 +207,7 @@ TEST_F(SettingsPromiseManagerTest, NoTimeoutThreeSettingsMixedOrder) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(ChannelArgs(),
-                             Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification;
   party->Spawn(
       "SettingsPromiseManagerTest",
@@ -240,9 +233,7 @@ TEST_F(SettingsPromiseManagerTest, TimeoutOneSetting) {
   auto party = MakeParty();
   SettingsPromiseManager manager;
   ExecCtx exec_ctx;
-  manager.SetSettingsTimeout(
-      ChannelArgs().Set(GRPC_ARG_SETTINGS_TIMEOUT, kSettingsShortTimeout),
-      Duration::Milliseconds(kSettingsShortTimeout));
+  manager.SetSettingsTimeout(Duration::Milliseconds(kSettingsShortTimeout));
   Notification notification1;
   Notification notification2;
   party->Spawn("SettingsPromiseManagerTestStart",
