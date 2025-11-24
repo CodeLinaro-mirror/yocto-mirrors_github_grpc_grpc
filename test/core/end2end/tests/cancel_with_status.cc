@@ -65,6 +65,10 @@ CORE_END2END_TEST(CoreEnd2endTests, CancelWithStatus2) {
 }
 
 CORE_END2END_TEST(CoreEnd2endTests, CancelWithStatus3) {
+  // TODO(tjagtap) : [PH2][P1] : Remove this once the test is fixed.
+  grpc_tracer_set_enabled("http2_ph2_transport", true);
+  absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+  absl::SetGlobalVLogLevel(2);
   auto c = NewClientCall("/foo").Timeout(Duration::Minutes(1)).Create();
   IncomingMetadata server_initial_metadata;
   IncomingStatusOnClient server_status;
@@ -81,6 +85,10 @@ CORE_END2END_TEST(CoreEnd2endTests, CancelWithStatus3) {
   Step();
   EXPECT_EQ(server_status.status(), GRPC_STATUS_UNIMPLEMENTED);
   EXPECT_THAT(server_status.message(), ::testing::HasSubstr("xyz"));
+
+  // TODO(tjagtap) : [PH2][P1] : Remove this once the test is fixed.
+  absl::SetGlobalVLogLevel(-1);
+  grpc_tracer_set_enabled("http2_ph2_transport", false);
 }
 
 CORE_END2END_TEST(CoreEnd2endTests, CancelWithStatus4) {

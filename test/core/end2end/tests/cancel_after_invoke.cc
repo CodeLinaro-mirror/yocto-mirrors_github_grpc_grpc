@@ -76,6 +76,11 @@ void CancelAfterInvoke5(CoreEnd2endTest& test,
 void CancelAfterInvoke4(CoreEnd2endTest& test,
                         std::unique_ptr<CancellationMode> mode,
                         Duration timeout) {
+  // TODO(tjagtap) : [PH2][P1] : Remove this once the test is fixed.
+  grpc_tracer_set_enabled("http2_ph2_transport", true);
+  absl::SetMinLogLevel(absl::LogSeverityAtLeast::kInfo);
+  absl::SetGlobalVLogLevel(2);
+
   auto c = test.NewClientCall("/service/method").Timeout(timeout).Create();
   IncomingStatusOnClient server_status;
   IncomingMetadata server_initial_metadata;
@@ -89,6 +94,10 @@ void CancelAfterInvoke4(CoreEnd2endTest& test,
   test.Step();
   EXPECT_THAT(server_status.status(),
               ::testing::AnyOf(mode->ExpectedStatus(), GRPC_STATUS_INTERNAL));
+
+  // TODO(tjagtap) : [PH2][P1] : Remove this once the test is fixed.
+  absl::SetGlobalVLogLevel(-1);
+  grpc_tracer_set_enabled("http2_ph2_transport", false);
 }
 
 void CancelAfterInvoke3(CoreEnd2endTest& test,
