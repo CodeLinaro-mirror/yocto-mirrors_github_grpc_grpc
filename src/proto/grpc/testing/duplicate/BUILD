@@ -18,6 +18,11 @@ licenses(["notice"])
 
 grpc_package(
     name = "duplicate",
+    features = [
+        "layering_check",
+        # TODO(rishesh): Enable parse_headers when internal build system limitations are resolved.
+        # "parse_headers",
+    ],
     visibility = "public",
 )
 
@@ -36,5 +41,8 @@ grpc_cc_proto_library(
 grpc_cc_grpc_library(
     name = "echo_duplicate_cc_grpc",
     srcs = ["echo_duplicate_proto"],
-    deps = ["echo_duplicate_cc_proto"],
+    deps = [
+        "echo_duplicate_cc_proto",
+        "//:grpc++",
+    ],
 )

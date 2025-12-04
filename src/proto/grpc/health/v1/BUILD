@@ -18,6 +18,11 @@ licenses(["notice"])
 
 grpc_package(
     name = "health",
+    features = [
+        "layering_check",
+        # TODO(rishesh): Enable parse_headers when internal build system limitations are resolved.
+        # "parse_headers",
+    ],
     visibility = "public",
 )
 
@@ -35,7 +40,10 @@ grpc_cc_proto_library(
 grpc_cc_grpc_library(
     name = "health_cc_grpc",
     srcs = ["health_proto"],
-    deps = ["health_cc_proto"],
+    deps = [
+        "health_cc_proto",
+        "//:grpc++",
+    ],
 )
 
 filegroup(

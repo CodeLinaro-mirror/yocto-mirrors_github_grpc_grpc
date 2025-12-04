@@ -18,6 +18,11 @@ licenses(["notice"])
 
 grpc_package(
     name = "src/proto/grpc/lookup/v1",
+    features = [
+        "layering_check",
+        # TODO(rishesh): Enable parse_headers when internal build system limitations are resolved.
+        # "parse_headers",
+    ],
     visibility = "public",
 )
 
@@ -35,7 +40,10 @@ grpc_cc_proto_library(
 grpc_cc_grpc_library(
     name = "rls_cc_grpc",
     srcs = ["rls_proto"],
-    deps = ["rls_cc_proto"],
+    deps = [
+        "rls_cc_proto",
+        "//:grpc++",
+    ],
 )
 
 grpc_internal_proto_library(

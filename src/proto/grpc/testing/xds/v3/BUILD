@@ -18,6 +18,11 @@ licenses(["notice"])
 
 grpc_package(
     name = "xds_v3",
+    features = [
+        "layering_check",
+        # TODO(rishesh): Enable parse_headers when internal build system limitations are resolved.
+        # "parse_headers",
+    ],
     visibility = "tests",
 )
 
@@ -39,5 +44,8 @@ grpc_cc_proto_library(
 grpc_cc_grpc_library(
     name = "orca_service_cc_grpc",
     srcs = ["orca_service_proto"],
-    deps = ["orca_service_cc_proto"],
+    deps = [
+        "orca_service_cc_proto",
+        "//:grpc++",
+    ],
 )

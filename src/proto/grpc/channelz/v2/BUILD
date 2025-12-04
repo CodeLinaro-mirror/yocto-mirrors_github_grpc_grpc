@@ -26,6 +26,11 @@ licenses(["notice"])
 
 grpc_package(
     name = "src/proto/grpc/channelz/v2",
+    features = [
+        "layering_check",
+        # TODO(rishesh): Enable parse_headers once when internal build system limitations are resolved.
+        # "parse_headers",
+    ],
     visibility = "grpc",
 )
 
@@ -84,7 +89,10 @@ grpc_cc_proto_library(
 grpc_cc_grpc_library(
     name = "latent_see_cc_grpc",
     srcs = [":latent_see_proto"],
-    deps = [":latent_see_cc_proto"],
+    deps = [
+        ":latent_see_cc_proto",
+        "//:grpc++",
+    ],
 )
 
 grpc_internal_proto_library(
@@ -144,5 +152,6 @@ grpc_cc_grpc_library(
     ],
     deps = [
         ":service_cc_proto",
+        "//:grpc++",
     ],
 )
