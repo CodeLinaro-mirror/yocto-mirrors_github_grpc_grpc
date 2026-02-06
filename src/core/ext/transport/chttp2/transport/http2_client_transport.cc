@@ -604,8 +604,7 @@ Http2Status Http2ClientTransport::ProcessHttp2GoawayFrame(
   absl::Status status(ErrorCodeToAbslStatusCode(
                           FrameErrorCodeToHttp2ErrorCode(frame.error_code)),
                       frame.debug_data.as_string_view());
-  if (frame.error_code == static_cast<uint32_t>(Http2ErrorCode::kNoError) &&
-      frame.last_stream_id == RFC9113::kMaxStreamId31Bit) {
+  if (GoawayManager::IsGracefulGoaway(frame)) {
     const uint32_t next_stream_id = PeekNextStreamId();
     last_stream_id = (next_stream_id > 1) ? next_stream_id - 2 : 0;
   } else {
