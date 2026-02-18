@@ -210,9 +210,9 @@ class Http2ServerTransport final : public ServerTransport {
   // Http2Status ProcessIncomingFrame(Http2GoawayFrame&& frame);
   // Http2Status ProcessIncomingFrame(Http2WindowUpdateFrame&& frame);
   // Http2Status ProcessIncomingFrame(Http2ContinuationFrame&& frame);
-  // Http2Status ProcessIncomingFrame(Http2SecurityFrame&& frame);
-  // Http2Status ProcessIncomingFrame(Http2UnknownFrame&& frame);
-  // Http2Status ProcessIncomingFrame(Http2EmptyFrame&& frame);
+  Http2Status ProcessIncomingFrame(Http2SecurityFrame&& frame);
+  Http2Status ProcessIncomingFrame(Http2UnknownFrame&& frame);
+  Http2Status ProcessIncomingFrame(Http2EmptyFrame&& frame);
 
   // Http2Status ProcessMetadata(RefCountedPtr<Stream> stream);
 
@@ -222,14 +222,12 @@ class Http2ServerTransport final : public ServerTransport {
   //                                    Http2Status&& original_status,
   //                                    DebugLocation whence = {});
 
-  // Returns a promise to keep reading in a Loop till a fail/close is received.
-  auto ReadLoop();
+  auto ProcessOneIncomingFrame(Http2Frame frame);
 
   // Returns a promise that will read and process one HTTP2 frame.
   auto ReadAndProcessOneFrame();
 
-  // Returns a promise that will process one HTTP2 frame.
-  auto ProcessOneIncomingFrame(Http2Frame frame);
+  auto ReadLoop();
 
   // TODO(tjagtap) : [PH2][P1] : Delete this when read path is implemented.
   auto OnReadLoopEnded();
@@ -385,10 +383,11 @@ class Http2ServerTransport final : public ServerTransport {
   //   return (next_stream_id > 1) ? (next_stream_id - 2) : 0;
   // }
 
-  // inline uint32_t GetActiveStreamCountLocked() const
-  //     ABSL_EXCLUSIVE_LOCKS_REQUIRED(transport_mutex_) {
-  //   return stream_list_.size();
-  // }
+  inline uint32_t GetActiveStreamCountLocked() const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(transport_mutex_) {
+    // TODO(tjagtap) : [PH2][P1] : Check if impl needs to change for server.
+    return stream_list_.size();
+  }
 
   //////////////////////////////////////////////////////////////////////////////
   // Stream Operations
@@ -430,11 +429,11 @@ class Http2ServerTransport final : public ServerTransport {
   // void MaybeSpawnPingTimeout(std::optional<uint64_t> opaque_data);
   // void MaybeSpawnDelayedPing(std::optional<Duration> delayed_ping_wait);
 
-  // auto SendPing(absl::AnyInvocable<void()> on_initiate, bool important) {
-  //   return ping_manager_->RequestPing(std::move(on_initiate), important);
-  // }
+  auto SendPing(absl::AnyInvocable<void()> on_initiate, bool important) {
+    return ping_manager_->RequestPing(std::move(on_initiate), important);
+  }
 
-  // auto WaitForPingAck() { return ping_manager_->WaitForPingAck(); }
+  auto WaitForPingAck() { return ping_manager_->WaitForPingAck(); }
 
   // Duration NextAllowedPingInterval() {
   //   MutexLock lock(&transport_mutex_);
@@ -463,6 +462,8 @@ class Http2ServerTransport final : public ServerTransport {
   // This function is supposed to be idempotent.
   void CloseTransport() {}
 
+  // TODO(akshitpatel) : [PH2][P0] : Remove this when actual HandleError is
+  // implemented.
   absl::Status HandleError(Http2Status status, DebugLocation whence = {}) {
     auto error_type = status.GetType();
     GRPC_DCHECK(error_type != Http2Status::Http2ErrorType::kOk);
@@ -487,8 +488,17 @@ class Http2ServerTransport final : public ServerTransport {
   // should not be cancelled in case of stream errors.
   // If the error is a connection error, it closes the transport and returns the
   // corresponding (failed) absl status.
-  // absl::Status HandleError(const std::optional<uint32_t> stream_id,
-  //                          Http2Status status, DebugLocation whence = {});
+  absl::Status HandleError(const std::optional<uint32_t> stream_id,
+                           Http2Status status, DebugLocation whence = {}) {
+    // TODO(akshitpatel) : [PH2][P0] : Implement this. And remove the log.
+    GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::HandleError for stream id="
+                           << (stream_id.has_value() ? absl::StrCat(*stream_id)
+                                                     : "nullopt")
+                           << " status=" << status.DebugString()
+                           << " location=" << whence.file() << ":"
+                           << whence.line();
+    return absl::OkStatus();
+  }
 
   //////////////////////////////////////////////////////////////////////////////
   // Misc Transport Stuff
@@ -538,9 +548,7 @@ class Http2ServerTransport final : public ServerTransport {
 
    private:
     explicit KeepAliveInterfaceImpl(Http2ServerTransport* transport)
-        : transport_(transport) {
-      // TODO(akshitpatel) [PH2][P2] Implement this
-    }
+        : transport_(transport) {}
     Promise<absl::Status> SendPingAndWaitForAck() override;
     Promise<absl::Status> OnKeepAliveTimeout() override;
     bool NeedToSendKeepAlivePing() override;
@@ -553,10 +561,7 @@ class Http2ServerTransport final : public ServerTransport {
   class GoawayInterfaceImpl : public GoawayInterface {
    public:
     static std::unique_ptr<GoawayInterface> Make(
-        GRPC_UNUSED Http2ServerTransport* transport) {
-      // TODO(akshitpatel) : [PH2][P1] : Fix
-      return nullptr;
-    }
+        Http2ServerTransport* transport);
 
     Promise<absl::Status> SendPingAndWaitForAck() override {
       return transport_->ping_manager_->RequestPing(/*on_initiate=*/[] {},
@@ -570,9 +575,7 @@ class Http2ServerTransport final : public ServerTransport {
 
    private:
     explicit GoawayInterfaceImpl(Http2ServerTransport* transport)
-        : transport_(transport) {
-      // TODO(akshitpatel) [PH2][P2] Implement this
-    }
+        : transport_(transport) {}
     // Holding a raw pointer to transport works because all the promises
     // invoking the methods of this class are invoked while holding a ref to the
     // transport.
