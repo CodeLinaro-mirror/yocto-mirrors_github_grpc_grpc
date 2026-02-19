@@ -1463,6 +1463,8 @@ void Http2ClientTransport::SpawnTransportLoops() {
   if (!TriggerWriteCycleOrHandleError()) {
     return;
   }
+  // For Server, read happens before a write. So the ReadLoop is spawned.
+  // For Client, write happens before a read. So the MultiplexerLoop is spawned.
   SpawnGuardedTransportParty("MultiplexerLoop", MultiplexerLoop());
   GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport::SpawnTransportLoops End";
 }
