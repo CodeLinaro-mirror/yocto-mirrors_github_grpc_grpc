@@ -111,7 +111,7 @@ using StreamWritabilityUpdate =
 // TODO(tjagtap) : [PH2][P3] : Delete this comment when http2
 // rollout begins
 
-constexpr int kIsClient = false;
+constexpr bool kIsClient = false;
 
 //////////////////////////////////////////////////////////////////////////////
 // Channelz and ZTrace
@@ -357,7 +357,7 @@ Http2Status Http2ServerTransport::ProcessIncomingFrame(Http2DataFrame&& frame) {
   //           << "Http2ServerTransport::ProcessIncomingFrame(DataFrame) "
   //              "SpawnPushMessage "
   //           << message->DebugString();
-  //       stream->call.SpawnPushMessage(std::move(message));
+  //       stream->call().SpawnPushMessage(std::move(message));
   //       continue;
   //     }
   //     GRPC_HTTP2_SERVER_DLOG
@@ -421,8 +421,8 @@ Http2Status Http2ServerTransport::ProcessIncomingFrame(
   //   }
 
   //   if (incoming_headers_.ClientReceivedDuplicateMetadata(
-  //           stream->did_receive_initial_metadata,
-  //           stream->did_receive_trailing_metadata)) {
+  //           stream->IsReceivedInitialMetadata(),
+  //           stream->IsReceivedTrailingMetadata())) {
   //     return ParseAndDiscardHeaders(
   //         std::move(frame.payload), frame.end_headers, stream.get(),
   //         Http2Status::Http2StreamError(
@@ -764,7 +764,7 @@ Http2Status Http2ServerTransport::ProcessIncomingFrame(
 Http2Status Http2ServerTransport::ProcessMetadata(
     RefCountedPtr<Stream> stream) {
   HeaderAssembler& assembler = stream->header_assembler;
-  CallHandler call = stream->call;
+  // CallHandler& call = stream->Call();
 
   GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::ProcessMetadata";
   if (assembler.IsReady()) {
@@ -778,7 +778,7 @@ Http2Status Http2ServerTransport::ProcessMetadata(
       // ServerMetadataHandle metadata = TakeValue(std::move(read_result));
       // if (incoming_headers_.HeaderHasEndStream()) {
       //   stream->MarkHalfClosedRemote();
-      //   stream->did_receive_trailing_metadata = true;
+      //   stream->SetReceivedTrailingMetadata(true);
       //   // BeginCloseStream(std::move(stream),
       //   //                  /*reset_stream_error_code=*/std::nullopt,
       //   //                  std::move(metadata));
@@ -786,7 +786,7 @@ Http2Status Http2ServerTransport::ProcessMetadata(
       //   GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::ProcessMetadata "
       //                             "SpawnPushServerInitialMetadata";
       //   metadata->Set(PeerString(), incoming_headers_.peer_string());
-      //   stream->did_receive_initial_metadata = true;
+      //   stream->SetReceivedInitialMetadata(true);
       //   call.SpawnPushServerInitialMetadata(std::move(metadata));
       // }
       return Http2Status::Ok();
@@ -850,7 +850,8 @@ auto Http2ServerTransport::ReadAndProcessOneFrame() {
             /*incoming_header_stream_id*/
             incoming_headers_.GetStreamId(),
             /*current_frame_header*/ header,
-            /*last_stream_id=*/100,  // TODO(tjagtap) : [PH2][P0] : Fix
+            // TODO(tjagtap) : [PH2][P0] : Fix
+            /*last_stream_id=*//*GetLastStreamId()*/ 100,
             /*is_client=*/kIsClient, /*is_first_settings_processed=*/
             settings_->IsFirstPeerSettingsApplied());
 
@@ -1073,7 +1074,7 @@ auto Http2ServerTransport::ReadLoop() {
 //                            << stream->GetStreamId();
 //     stream->MarkHalfClosedLocal();
 
-//     if (stream->did_receive_trailing_metadata) {
+//     if (stream->IsReceivedTrailingMetadata()) {
 //       CloseStream(*stream, CloseStreamArgs{/*close_reads=*/true,
 //                                            /*close_writes=*/true});
 //     }
@@ -2104,6 +2105,7 @@ Http2ServerTransport::Http2ServerTransport(
       endpoint_(std::move(endpoint)),
       settings_(MakeRefCounted<SettingsPromiseManager>(nullptr)),
       incoming_headers_(IncomingMetadataTracker::GetPeerString(endpoint_)),
+      transport_write_context_(kIsClient),
       ping_manager_(std::nullopt),
       keepalive_manager_(std::nullopt),
       goaway_manager_(GoawayInterfaceImpl::Make(this)),
@@ -2204,6 +2206,22 @@ void Http2ServerTransport::SpawnTransportLoops() {
   SpawnGuardedTransportParty("WriteLoop", WriteLoop());
 
   GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::SpawnTransportLoops End";
+}
+
+void Http2ServerTransport::InitializeAndSpawnTransportLoops() {
+  SpawnGuardedTransportParty(
+      "SpawnTransportLoops", [self = RefAsSubclass<Http2ServerTransport>()] {
+        return Map(
+            self->EndpointReadSlice(GRPC_CHTTP2_CLIENT_CONNECT_STRLEN),
+            [self](absl::StatusOr<Slice> status) -> absl::Status {
+              Http2Status result = ValidateIncomingConnectionPreface(status);
+              if (!result.IsOk()) {
+                return self->HandleError(std::nullopt, std::move(result));
+              }
+              self->SpawnTransportLoops();
+              return absl::OkStatus();
+            });
+      });
 }
 
 }  // namespace http2
