@@ -589,7 +589,7 @@ class Http2ServerTransport final : public ServerTransport,
                        TransportChannelArgs& args);
 
   auto SecurityFrameLoop() {
-    GRPC_HTTP2_CLIENT_DLOG << "Http2ClientTransport::SecurityFrameLoop Factory";
+    GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::SecurityFrameLoop Factory";
     return AssertResultType<Empty>(Loop([this]() {
       return Map(security_frame_handler_->WaitForSecurityFrameSending(),
                  [this](Empty) -> LoopCtl<Empty> {
@@ -727,8 +727,8 @@ class Http2ServerTransport final : public ServerTransport,
 
   /// Based on channel args, preferred_rx_crypto_frame_sizes are advertised to
   /// the peer
-  GRPC_UNUSED bool enable_preferred_rx_crypto_frame_advertisement_;
-  GRPC_UNUSED RefCountedPtr<SecurityFrameHandler> security_frame_handler_;
+  bool enable_preferred_rx_crypto_frame_advertisement_;
+  RefCountedPtr<SecurityFrameHandler> security_frame_handler_;
   MemoryOwner memory_owner_;
   chttp2::TransportFlowControl flow_control_;
   std::shared_ptr<PromiseHttp2ZTraceCollector> ztrace_collector_;

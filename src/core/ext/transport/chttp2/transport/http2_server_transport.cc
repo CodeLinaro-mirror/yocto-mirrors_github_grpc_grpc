@@ -1548,8 +1548,7 @@ RefCountedPtr<Stream> Http2ServerTransport::LookupStream(uint32_t stream_id) {
 //     CallHandler call_handler) {
 //   // https://datatracker.ietf.org/doc/html/rfc9113#name-stream-identifiers
 //   RefCountedPtr<Stream> stream;
-//   stream = MakeRefCounted<Stream>(call_handler, flow_control_,
-//                                   /*is_client=*/kIsClient);
+//   stream = MakeRefCounted<Stream>(call_handler, flow_control_);
 //   const bool on_done_added = SetOnDone(std::move(call_handler), stream);
 //   if (!on_done_added) return std::nullopt;
 //   return std::move(stream);
