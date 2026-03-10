@@ -38,4 +38,12 @@ python -VV
 pip install black==25.1.0
 pip list
 
-exec black --config=grpc-style-config.toml $ACTION "${DIRS[@]}"
+if [[ "$ACTION" == "--check" ]]; then
+    black --config=grpc-style-config.toml --check "${DIRS[@]}" || {
+        echo "Black check failed. Showing diff:"
+        black --config=grpc-style-config.toml --diff "${DIRS[@]}"
+        exit 1
+    }
+else
+    exec black --config=grpc-style-config.toml $ACTION "${DIRS[@]}"
+fi
