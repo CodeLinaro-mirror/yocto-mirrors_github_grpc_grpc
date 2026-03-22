@@ -20,11 +20,13 @@
 #include <grpcpp/client_context.h>
 #include <grpcpp/create_channel.h>
 #include <grpcpp/generic/generic_stub.h>
+#include <grpcpp/impl/generic_stub_session.h>
 #include <grpcpp/impl/proto_utils.h>
 #include <grpcpp/server.h>
 #include <grpcpp/server_builder.h>
 #include <grpcpp/server_context.h>
 #include <grpcpp/support/client_callback.h>
+#include <grpcpp/virtual_channel.h>
 
 #include <algorithm>
 #include <condition_variable>
@@ -60,16 +62,18 @@ enum class Protocol { INPROC, TCP };
 class TestScenario {
  public:
   TestScenario(bool serve_callback, Protocol protocol, bool intercept,
-               const std::string& creds_type)
+               const std::string& creds_type, bool use_virtual_rpcs = false)
       : callback_server(serve_callback),
         protocol(protocol),
         use_interceptors(intercept),
-        credentials_type(creds_type) {}
+        credentials_type(creds_type),
+        use_virtual_rpcs(use_virtual_rpcs) {}
   void Log() const;
   bool callback_server;
   Protocol protocol;
   bool use_interceptors;
   const std::string credentials_type;
+  bool use_virtual_rpcs;
 };
 
 std::ostream& operator<<(std::ostream& out, const TestScenario& scenario) {
@@ -77,7 +81,9 @@ std::ostream& operator<<(std::ostream& out, const TestScenario& scenario) {
              << (scenario.callback_server ? "true" : "false") << ",protocol="
              << (scenario.protocol == Protocol::INPROC ? "INPROC" : "TCP")
              << ",intercept=" << (scenario.use_interceptors ? "true" : "false")
-             << ",creds=" << scenario.credentials_type << "}";
+             << ",creds=" << scenario.credentials_type
+             << ",virtual=" << (scenario.use_virtual_rpcs ? "true" : "false")
+             << "}";
 }
 
 void TestScenario::Log() const {
@@ -104,7 +110,8 @@ class ClientCallbackEnd2endTest
       builder.AddListeningPort(server_address_.str(), server_creds);
     }
     if (!GetParam().callback_server) {
-      builder.RegisterService(&service_);
+      service_ = std::make_unique<TestServiceImpl>(GetParam().use_virtual_rpcs);
+      builder.RegisterService(service_.get());
     } else {
       builder.RegisterService(&callback_service_);
     }
@@ -128,6 +135,10 @@ class ClientCallbackEnd2endTest
   void ResetStub(
       std::unique_ptr<experimental::ClientInterceptorFactoryInterface>
           interceptor = nullptr) {
+    if (session_context_) {
+      session_context_->TryCancel();
+      session_context_.reset();
+    }
     ChannelArguments args;
     ApplyCommonChannelArguments(args);
     auto channel_creds = GetCredentialsProvider()->GetChannelCredentials(
@@ -156,12 +167,26 @@ class ClientCallbackEnd2endTest
       default:
         assert(false);
     }
+
+    if (GetParam().use_virtual_rpcs) {
+      session_context_ = std::make_unique<ClientContext>();
+      session_request_ = std::make_unique<grpc::testing::EchoRequest>();
+      session_request_->set_message("Session request");
+
+      channel_ = MaybeWrapVirtualChannel<grpc::testing::EchoRequest,
+                                         grpc::testing::EchoResponse>(
+          channel_, args, true, session_context_.get(), session_request_.get());
+    }
+
     stub_ = grpc::testing::EchoTestService::NewStub(channel_);
     generic_stub_ = std::make_unique<GenericStub>(channel_);
     PhonyInterceptor::Reset();
   }
 
   void TearDown() override {
+    if (session_context_) {
+      session_context_->TryCancel();
+    }
     if (is_server_started_) {
       // Although we would normally do an explicit shutdown, the server
       // should also work correctly with just a destructor call. The regular
@@ -339,10 +364,12 @@ class ClientCallbackEnd2endTest
   }
   bool is_server_started_{false};
   int picked_port_{0};
+  std::unique_ptr<grpc::testing::EchoRequest> session_request_;
+  std::unique_ptr<ClientContext> session_context_;
   std::shared_ptr<Channel> channel_;
   std::unique_ptr<grpc::testing::EchoTestService::Stub> stub_;
   std::unique_ptr<grpc::GenericStub> generic_stub_;
-  TestServiceImpl service_;
+  std::unique_ptr<TestServiceImpl> service_;
   CallbackTestServiceImpl callback_service_;
   std::unique_ptr<Server> server_;
   std::ostringstream server_address_;
@@ -1556,7 +1583,14 @@ std::vector<TestScenario> CreateTestScenarios(bool test_insecure) {
       }
       for (bool callback_server : barr) {
         for (bool use_interceptors : barr) {
-          scenarios.emplace_back(callback_server, p, use_interceptors, cred);
+          for (bool use_virtual_rpcs : barr) {
+            if (use_virtual_rpcs &&
+                (p == Protocol::INPROC || use_interceptors)) {
+              continue;
+            }
+            scenarios.emplace_back(callback_server, p, use_interceptors, cred,
+                                   use_virtual_rpcs);
+          }
         }
       }
     }
