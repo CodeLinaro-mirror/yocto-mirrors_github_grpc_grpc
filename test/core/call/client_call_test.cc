@@ -19,6 +19,7 @@
 
 #include "src/core/call/metadata.h"
 #include "src/core/lib/resource_quota/arena.h"
+#include "src/core/lib/surface/call.h"
 #include "src/core/util/debug_location.h"
 #include "test/core/call/batch_builder.h"
 #include "test/core/call/yodel/yodel_test.h"
@@ -78,6 +79,13 @@ class ClientCallTest : public YodelTest {
 
   BatchBuilder NewBatch(int tag) {
     return BatchBuilder(call_, cq_verifier_.get(), tag);
+  }
+
+  void StartBatchWithClosure(const std::vector<grpc_op>& ops,
+                             grpc_closure* closure) {
+    grpc_call_error err = grpc_call_start_batch_and_execute(
+        call_, ops.data(), ops.size(), closure);
+    EXPECT_EQ(err, GRPC_CALL_OK) << grpc_call_error_to_string(err);
   }
 
   // Pull in CqVerifier types for ergonomics
@@ -277,6 +285,62 @@ CLIENT_CALL_TEST(NegativeDeadline) {
   EXPECT_LE(now - start, Duration::Milliseconds(100))
       << GRPC_DUMP_ARGS(now, start);
   WaitForAllPendingWork();
+}
+
+// Test that cancelling a call with a pending batch (not yet started or polled)
+// handles cleanup correctly without crashing.
+CLIENT_CALL_TEST(CancelWithPendingBatch) {
+  grpc_call* call = InitCall(CallOptions());
+  IncomingMessage msg;
+  IncomingStatusOnClient status;
+  // Create a batch op (receive status).
+  NewBatch(1).RecvMessage(msg);
+  NewBatch(2).RecvStatusOnClient(status);
+  // Cancel the call.
+  grpc_call_cancel(call, nullptr);
+  Expect(1, false);
+  Expect(2, true);
+  TickThroughCqExpectations();
+  EXPECT_EQ(status.status(), GRPC_STATUS_CANCELLED);
+  WaitForAllPendingWork();
+}
+
+// Test that cancelling a call with a pending batch (not yet started or polled)
+// handles cleanup correctly without crashing, using closures instead of tags.
+CLIENT_CALL_TEST(CancelWithPendingBatchClosure) {
+  grpc_call* const call = InitCall(CallOptions());
+  IncomingMessage msg;
+  IncomingStatusOnClient status;
+
+  grpc_closure closure1;
+  bool closure1_called = false;
+  GRPC_CLOSURE_INIT(
+      &closure1,
+      [](void* arg, grpc_error_handle error) {
+        *static_cast<bool*>(arg) = true;
+      },
+      &closure1_called, grpc_schedule_on_exec_ctx);
+
+  grpc_closure closure2;
+  bool closure2_called = false;
+  GRPC_CLOSURE_INIT(
+      &closure2,
+      [](void* arg, grpc_error_handle error) {
+        *static_cast<bool*>(arg) = true;
+      },
+      &closure2_called, grpc_schedule_on_exec_ctx);
+
+  StartBatchWithClosure({msg.MakeOp()}, &closure1);
+  StartBatchWithClosure({status.MakeOp()}, &closure2);
+
+  // Cancel the call.
+  grpc_call_cancel(call, nullptr);
+
+  WaitForAllPendingWork();
+
+  EXPECT_TRUE(closure1_called);
+  EXPECT_TRUE(closure2_called);
+  EXPECT_EQ(status.status(), GRPC_STATUS_CANCELLED);
 }
 
 TEST(ClientCallTest, NoOpRegression1) {
