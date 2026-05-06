@@ -124,6 +124,23 @@ class Http2Settings {
     return 2147483647u;
   }
 
+  static bool IsKnownSettingId(const uint16_t id) {
+    switch (id) {
+      case kHeaderTableSizeWireId:
+      case kEnablePushWireId:
+      case kMaxConcurrentStreamsWireId:
+      case kInitialWindowSizeWireId:
+      case kMaxFrameSizeWireId:
+      case kMaxHeaderListSizeWireId:
+      case kGrpcAllowTrueBinaryMetadataWireId:
+      case kGrpcPreferredReceiveCryptoFrameSizeWireId:
+      case kGrpcAllowSecurityFrameWireId:
+        return true;
+      default:
+        return false;
+    }
+  }
+
   static std::string WireIdToName(uint16_t wire_id);
 
   bool operator==(const Http2Settings& rhs) const {

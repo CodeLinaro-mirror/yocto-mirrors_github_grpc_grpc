@@ -49,6 +49,7 @@
 #include "src/core/util/grpc_check.h"
 #include "src/core/util/ref_counted.h"
 #include "src/core/util/time.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
@@ -200,8 +201,11 @@ class SettingsPromiseManager final : public RefCounted<SettingsPromiseManager> {
     ++num_acks_to_send_;
     pending_peer_settings_.reserve(pending_peer_settings_.size() +
                                    settings.size());
-    pending_peer_settings_.insert(pending_peer_settings_.end(),
-                                  settings.begin(), settings.end());
+    for (const auto& setting : settings) {
+      if (Http2Settings::IsKnownSettingId(setting.id)) {
+        pending_peer_settings_[setting.id] = setting.value;
+      }
+    }
   }
 
   // Applies settings buffered by BufferPeerSettings().
@@ -211,8 +215,14 @@ class SettingsPromiseManager final : public RefCounted<SettingsPromiseManager> {
   http2::Http2ErrorCode MaybeReportAndApplyBufferedPeerSettings(
       grpc_event_engine::experimental::EventEngine* event_engine,
       bool& should_spawn_security_frame_loop) {
-    http2::Http2ErrorCode status = settings_.ApplyIncomingSettings(
-        std::exchange(pending_peer_settings_, {}));
+    std::vector<Http2SettingsFrame::Setting> settings_to_apply;
+    settings_to_apply.reserve(pending_peer_settings_.size());
+    for (const auto& [id, value] : pending_peer_settings_) {
+      settings_to_apply.emplace_back(id, value);
+    }
+    pending_peer_settings_.clear();
+    http2::Http2ErrorCode status =
+        settings_.ApplyIncomingSettings(settings_to_apply);
     if (state_ == SettingsState::kFirstPeerSettingsReceived) {
       MaybeReportInitialSettings(event_engine);
       state_ = SettingsState::kReady;
@@ -419,7 +429,7 @@ class SettingsPromiseManager final : public RefCounted<SettingsPromiseManager> {
   // Data Members for SETTINGS being received from the peer.
 
   absl::AnyInvocable<void(absl::StatusOr<uint32_t>)> on_receive_first_settings_;
-  std::vector<Http2SettingsFrame::Setting> pending_peer_settings_;
+  absl::flat_hash_map<uint16_t, uint32_t> pending_peer_settings_;
   // Number of incoming SETTINGS frames that we have received but not ACKed yet.
   uint32_t num_acks_to_send_ = 0;
 
