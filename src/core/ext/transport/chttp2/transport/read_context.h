@@ -238,7 +238,7 @@ class ReadContext {
   }
 
   Http2Status ValidateHeader(const uint32_t max_frame_size_setting,
-                             Http2FrameHeader& current_frame_header,
+                             const Http2FrameHeader& current_frame_header,
                              const uint32_t last_stream_id,
                              const bool is_first_settings_processed) {
     GRPC_HTTP2_COMMON_DLOG << "ReadContext::ValidateFrameHeader "

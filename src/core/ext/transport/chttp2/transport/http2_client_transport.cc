@@ -313,7 +313,7 @@ Http2Status Http2ClientTransport::ProcessIncomingFrame(Http2DataFrame&& frame) {
     break;
   }
 
-  // TODO(tjagtap) : [PH2][P2] : List of Tests:
+  // TODO(tjagtap) : [PH2][P3] : List of Tests:
   // 1. Data frame with unknown stream ID
   // 2. Data frame with only half a message and then end stream
   // 3. One data frame with a full message
@@ -608,8 +608,6 @@ Http2Status Http2ClientTransport::ProcessIncomingFrame(
 
 Http2Status Http2ClientTransport::ProcessIncomingFrame(
     Http2SecurityFrame&& frame) {
-  GRPC_HTTP2_CLIENT_DLOG
-      << "Http2ClientTransport::ProcessIncomingFrame(SecurityFrame) ";
   if (settings_->IsSecurityFrameExpected()) {
     security_frame_handler_->ProcessPayload(std::move(frame.payload));
   }
@@ -1769,7 +1767,7 @@ RefCountedPtr<channelz::SocketNode> Http2ClientTransport::GetSocketNode()
 
 absl::StatusOr<uint32_t> Http2ClientTransport::NextStreamId() {
   if (next_stream_id_ > GetMaxAllowedStreamId()) {
-    // TODO(tjagtap) : [PH2][P3] : Handle case if transport runs out of stream
+    // TODO(tjagtap) : [PH2][P2] : Handle case if transport runs out of stream
     // ids
     // RFC9113 : Stream identifiers cannot be reused. Long-lived connections
     // can result in an endpoint exhausting the available range of stream
