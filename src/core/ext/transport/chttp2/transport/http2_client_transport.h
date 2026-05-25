@@ -695,8 +695,6 @@ class Http2ClientTransport final : public ClientTransport,
 
   // TODO(tjagtap) [PH2][P2][BDP] Remove this when the BDP code is done.
   Waker periodic_updates_waker_;
-
-  Http2ReadContext reader_state_;
 };
 
 }  // namespace http2
