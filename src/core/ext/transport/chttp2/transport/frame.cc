@@ -860,9 +860,11 @@ Http2Status ValidateFrameHeader(const uint32_t max_frame_size_setting,
                      ", Current Size = ", current_frame_header.length,
                      ", Max Size = ", max_frame_size_setting));
   }
-  if (GPR_UNLIKELY(incoming_header_in_progress &&
-                   (!is_continuation_frame || current_frame_header.stream_id !=
-                                                  incoming_header_stream_id))) {
+  if (GPR_UNLIKELY(
+          (incoming_header_in_progress &&
+           (!is_continuation_frame ||
+            current_frame_header.stream_id != incoming_header_stream_id)) ||
+          (!incoming_header_in_progress && is_continuation_frame))) {
     return Http2Status::Http2ConnectionError(
         Http2ErrorCode::kProtocolError,
         std::string(RFC9113::kAssemblerContiguousSequenceError));
