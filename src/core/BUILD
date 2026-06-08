@@ -10964,7 +10964,6 @@ grpc_cc_library(
     ],
     external_deps = [
         "absl/log",
-        "absl/strings",
         "absl/types:span",
     ],
     deps = [
