@@ -2015,7 +2015,13 @@ class CallFilters {
     GRPC_DCHECK_NE(message.get(), nullptr);
     GRPC_DCHECK_EQ(push_client_to_server_message_.get(), nullptr);
     push_client_to_server_message_ = std::move(message);
-    return [this]() { return call_state_.PollPushClientToServerMessage(); };
+    return [this]() {
+      auto r = call_state_.PollPushClientToServerMessage();
+      if (r.ready() && !IsStatusOk(r.value())) {
+        push_client_to_server_message_ = nullptr;
+      }
+      return r;
+    };
   }
   // Client: Indicate that no more messages will be sent
   void FinishClientToServerSends() { call_state_.ClientToServerHalfClose(); }
@@ -2047,7 +2053,13 @@ class CallFilters {
   GRPC_MUST_USE_RESULT auto PushServerToClientMessage(MessageHandle message) {
     call_state_.BeginPushServerToClientMessage();
     push_server_to_client_message_ = std::move(message);
-    return [this]() { return call_state_.PollPushServerToClientMessage(); };
+    return [this]() {
+      auto r = call_state_.PollPushServerToClientMessage();
+      if (r.ready() && !IsStatusOk(r.value())) {
+        push_server_to_client_message_ = nullptr;
+      }
+      return r;
+    };
   }
   // Server: Fetch server to client message
   // Returns a promise that resolves to ServerToClientNextMessage
