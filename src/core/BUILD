@@ -10718,6 +10718,7 @@ grpc_cc_library(
         "pipe",
         "prioritized_race",
         "promise_status",
+        "race",
         "status_flag",
         "try_seq",
         "//:channelz",
