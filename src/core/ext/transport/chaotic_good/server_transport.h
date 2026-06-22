@@ -152,9 +152,7 @@ class ChaoticGoodServerTransport final : public ServerTransport {
                            BeginMessageFrame frame);
     auto PushFrameIntoCall(RefCountedPtr<Stream> stream,
                            MessageChunkFrame frame);
-    auto SendCallInitialMetadataAndBody(
-        uint32_t stream_id, CallInitiator call_initiator,
-        std::shared_ptr<TcpCallTracer> call_tracer);
+
     auto SendCallBody(uint32_t stream_id, CallInitiator call_initiator,
                       std::shared_ptr<TcpCallTracer> call_tracer);
     auto CallOutboundLoop(uint32_t stream_id, CallInitiator call_initiator);

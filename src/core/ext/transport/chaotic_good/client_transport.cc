@@ -26,21 +26,22 @@
 #include <tuple>
 #include <utility>
 
+#include "src/core/call/metadata.h"
 #include "src/core/ext/transport/chaotic_good/frame.h"
 #include "src/core/ext/transport/chaotic_good/frame_header.h"
 #include "src/core/ext/transport/chaotic_good/frame_transport.h"
 #include "src/core/lib/event_engine/event_engine_context.h"
 #include "src/core/lib/event_engine/query_extensions.h"
 #include "src/core/lib/iomgr/exec_ctx.h"
+#include "src/core/lib/promise/for_each.h"
 #include "src/core/lib/promise/loop.h"
-#include "src/core/lib/promise/map.h"
 #include "src/core/lib/promise/switch.h"
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/lib/resource_quota/arena.h"
 #include "src/core/lib/resource_quota/resource_quota.h"
 #include "src/core/lib/slice/slice_buffer.h"
 #include "src/core/lib/transport/promise_endpoint.h"
-#include "src/core/util/grpc_check.h"
+#include "src/core/lib/transport/transport.h"
 #include "src/core/util/ref_counted_ptr.h"
 #include "absl/log/log.h"
 #include "absl/random/bit_gen_ref.h"
@@ -296,48 +297,53 @@ void ChaoticGoodClientTransport::AddData(channelz::DataSink sink) {
 
 auto ChaoticGoodClientTransport::CallOutboundLoop(uint32_t stream_id,
                                                   CallHandler call_handler) {
-  CallTracer* const tracer = call_handler.arena()->GetContext<CallTracer>();
-  std::shared_ptr<TcpCallTracer> call_tracer;
-  if (tracer != nullptr && tracer->IsSampled()) {
-    call_tracer = tracer->StartNewTcpTrace();
-  }
-  auto send_fragment = [this, call_tracer, stream_id](auto frame) mutable {
-    frame.stream_id = stream_id;
-    auto tokens = FrameMpscTokens(frame);
-    return outgoing_frames_.Send(OutgoingFrame{std::move(frame), call_tracer},
-                                 tokens);
-  };
-  auto send_message = [this, stream_id, call_tracer,
-                       message_chunker =
-                           message_chunker_](MessageHandle message) mutable {
-    if (ctx_->socket_node != nullptr) {
-      ctx_->socket_node->RecordMessagesSent(1);
-    }
-    return message_chunker.Send(std::move(message), stream_id, call_tracer,
-                                outgoing_frames_);
-  };
   return GRPC_LATENT_SEE_PROMISE(
       "CallOutboundLoop",
       TrySeq(
           // Wait for initial metadata then send it out.
           call_handler.PullClientInitialMetadata(),
-          [send_fragment](ClientMetadataHandle md) mutable {
+          [this, call_handler, stream_id](ClientMetadataHandle md) mutable {
             GRPC_TRACE_LOG(chaotic_good, INFO)
                 << "CHAOTIC_GOOD: Sending initial metadata: "
                 << md->DebugString();
+            CallTracer* const tracer =
+                call_handler.arena()->GetContext<CallTracer>();
+            const std::shared_ptr<TcpCallTracer> call_tracer =
+                (tracer != nullptr && tracer->IsSampled())
+                    ? tracer->StartNewTcpTrace()
+                    : nullptr;
+            auto send_fragment = [this, call_tracer,
+                                  stream_id](auto frame) mutable {
+              frame.stream_id = stream_id;
+              const auto tokens = FrameMpscTokens(frame);
+              return outgoing_frames_.Send(
+                  OutgoingFrame{std::move(frame), call_tracer}, tokens);
+            };
+            auto send_message = [this, stream_id, call_tracer,
+                                 message_chunker = message_chunker_](
+                                    MessageHandle message) mutable {
+              if (ctx_->socket_node != nullptr) {
+                ctx_->socket_node->RecordMessagesSent(1u);
+              }
+              return message_chunker.Send(std::move(message), stream_id,
+                                          call_tracer, outgoing_frames_);
+            };
             ClientInitialMetadataFrame frame;
             frame.body = ClientMetadataProtoFromGrpc(*md);
-            return send_fragment(std::move(frame));
-          },
-          // Continuously send client frame with client to server messages.
-          ForEach(MessagesFrom(call_handler), std::move(send_message)),
-          [send_fragment]() mutable {
-            ClientEndOfStream frame;
-            return send_fragment(std::move(frame));
-          },
-          [call_handler]() mutable {
-            return Map(call_handler.WasCancelled(),
-                       [](bool cancelled) { return StatusFlag(!cancelled); });
+            return TrySeq(
+                send_fragment(std::move(frame)),
+                // Continuously send client frame with client to server
+                // messages.
+                ForEach(MessagesFrom(call_handler), std::move(send_message)),
+                [send_fragment]() mutable {
+                  ClientEndOfStream frame;
+                  return send_fragment(std::move(frame));
+                },
+                [call_handler]() mutable {
+                  return Map(call_handler.WasCancelled(), [](bool cancelled) {
+                    return StatusFlag(!cancelled);
+                  });
+                });
           }));
 }
 

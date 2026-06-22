@@ -150,6 +150,7 @@ grpc_cc_library(
         "mock_frame_transport.h",
     ],
     external_deps = [
+        "absl/strings",
         "gtest",
         "protobuf_headers",
     ],
@@ -177,6 +178,7 @@ grpc_cc_test(
     deps = [
         "mock_frame_transport",
         "transport_test_helper",
+        "//:call_tracer",
         "//:config",
         "//:grpc",
         "//:grpc_public_hdrs",
@@ -189,6 +191,7 @@ grpc_cc_test(
         "//src/core:metadata_batch",
         "//src/core:seq",
         "//src/core:slice_buffer",
+        "//src/core:tcp_tracer",
         "//test/core/transport/util:mock_promise_endpoint",
         "//test/core/transport/util:transport_test",
     ],
@@ -209,6 +212,7 @@ grpc_cc_test(
     deps = [
         "mock_frame_transport",
         "transport_test_helper",
+        "//:call_tracer",
         "//:grpc",
         "//:grpc_public_hdrs",
         "//:iomgr_timer",
@@ -222,6 +226,7 @@ grpc_cc_test(
         "//src/core:seq",
         "//src/core:slice",
         "//src/core:slice_buffer",
+        "//src/core:tcp_tracer",
         "//test/core/event_engine/fuzzing_event_engine",
         "//test/core/event_engine/fuzzing_event_engine:fuzzing_event_engine_cc_proto",
         "//test/core/transport/util:mock_promise_endpoint",

@@ -9701,6 +9701,7 @@ grpc_cc_library(
         "loop",
         "map",
         "memory_quota",
+        "metadata",
         "metadata_batch",
         "mpsc",
         "pipe",
