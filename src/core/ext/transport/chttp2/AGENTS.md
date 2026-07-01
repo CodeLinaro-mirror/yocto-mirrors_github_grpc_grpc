@@ -266,7 +266,8 @@ We need to ensure that our slots do not exceed 16.
 | WaitForSettingsTimeout | Timeout | Settings Timeout | 1 | When we write SETTINGS | Settings timeout | Settings Ack Received or Settings Timeout |
 | Keepalive | Loop | Keepalive Loop | 1 | If Keepalive is enabled, after constructor | Lifetime of the transport | Transport Close
 | Ping | Timeout + Misc | | 4 | Sending a ping request | Timeout or a specific duration |
-| | | **Total** | 12 | | | |
+| Graceful Goaway | Misc | | 1 | Sending a graceful Goaway | As long as it takes to complete the graceful goaway process |
+| | | **Total** | 13 | | | |
 
 ## PH2 Server Party Slots Usage
 
