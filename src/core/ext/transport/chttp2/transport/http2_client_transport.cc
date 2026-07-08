@@ -1226,7 +1226,8 @@ Http2ClientTransport::Http2ClientTransport(
       next_stream_id_(/*Initial Stream ID*/ 1),
       should_reset_ping_clock_(false),
       read_context_(MaxNewStreamsPerRead(channel_args), endpoint_, kIsClient,
-                    GetMaxSecurityFrameSize(channel_args)),
+                    GetMaxSecurityFrameSize(channel_args),
+                    GetPingOnRstStreamPercent(channel_args, kIsClient)),
       transport_write_context_(kIsClient),
       ping_manager_(std::nullopt),
       keepalive_manager_(std::nullopt),
@@ -1388,19 +1389,22 @@ void Http2ClientTransport::BeginCloseStream(
       << ":" << whence.line();
 
   // Enqueue RST_STREAM.
+  EnqueueResetStream(stream, reset_stream_error_code);
+  HandleStreamStateChange(
+      *stream, stream->OnInitiateReset(std::move(trailing_metadata_status)));
+}
+
+void Http2ClientTransport::EnqueueResetStream(
+    RefCountedPtr<Stream> stream, const uint32_t reset_stream_error_code) {
   absl::StatusOr<StreamWritabilityUpdate> enqueue_result =
       stream->EnqueueResetStream(reset_stream_error_code);
   GRPC_HTTP2_CLIENT_DLOG << "Enqueued ResetStream with error code="
                          << reset_stream_error_code
                          << " status=" << enqueue_result.status();
   if (enqueue_result.ok()) {
-    GRPC_UNUSED absl::Status status =
-        MaybeAddStreamToWritableStreamList(stream, enqueue_result.value());
+    GRPC_UNUSED absl::Status status = MaybeAddStreamToWritableStreamList(
+        std::move(stream), enqueue_result.value());
   }
-  // Close reads immediately. Writes will be closed by the write loop after
-  // the RST_STREAM frame is written.
-  HandleStreamStateChange(*stream,
-                          stream->OnInitiateReset(trailing_metadata_status));
   read_context_.OnResetFrameEnqueued(reset_stream_error_code);
 }
 
@@ -1644,7 +1648,6 @@ bool Http2ClientTransport::SetOnDone(CallHandler call_handler,
     GRPC_HTTP2_CLIENT_DLOG << "PH2: Client call " << self.get()
                            << " id=" << stream->GetStreamId()
                            << " done: cancelled=" << cancelled;
-    absl::StatusOr<StreamWritabilityUpdate> enqueue_result;
     GRPC_HTTP2_CLIENT_DLOG << "PH2: Client call " << self.get()
                            << " id=" << stream->GetStreamId()
                            << " done: stream=" << stream.get()
@@ -1664,27 +1667,24 @@ bool Http2ClientTransport::SetOnDone(CallHandler call_handler,
       // BeginCloseStream would have already enqueued the reset stream.
       // Currently only Aborts from application will actually enqueue
       // the reset stream here.
-      enqueue_result = stream->EnqueueResetStream(
-          static_cast<uint32_t>(Http2ErrorCode::kCancel));
-      GRPC_HTTP2_CLIENT_DLOG << "Enqueued ResetStream with error code="
-                             << static_cast<uint32_t>(Http2ErrorCode::kCancel)
-                             << " status=" << enqueue_result.status();
+      self->EnqueueResetStream(std::move(stream),
+                               static_cast<uint32_t>(Http2ErrorCode::kCancel));
     } else {
-      enqueue_result = stream->EnqueueHalfClosed();
+      absl::StatusOr<StreamWritabilityUpdate> enqueue_result =
+          stream->EnqueueHalfClosed();
       GRPC_HTTP2_CLIENT_DLOG << "Enqueued HalfClosed with result="
                              << enqueue_result.status();
-    }
-
-    if (GPR_LIKELY(enqueue_result.ok())) {
-      GRPC_HTTP2_CLIENT_DLOG
-          << "Http2ClientTransport::SetOnDone "
-             "MaybeAddStreamToWritableStreamList for stream= "
-          << stream->GetStreamId() << " enqueue_result={became_writable="
-          << enqueue_result.value().became_writable << ", priority="
-          << static_cast<uint8_t>(enqueue_result.value().priority) << "}";
-      GRPC_UNUSED absl::Status status =
-          self->MaybeAddStreamToWritableStreamList(std::move(stream),
-                                                   enqueue_result.value());
+      if (GPR_LIKELY(enqueue_result.ok())) {
+        GRPC_HTTP2_CLIENT_DLOG
+            << "Http2ClientTransport::SetOnDone "
+               "MaybeAddStreamToWritableStreamList for stream= "
+            << stream->GetStreamId() << " enqueue_result={became_writable="
+            << enqueue_result.value().became_writable << ", priority="
+            << static_cast<uint8_t>(enqueue_result.value().priority) << "}";
+        GRPC_UNUSED absl::Status status =
+            self->MaybeAddStreamToWritableStreamList(std::move(stream),
+                                                     enqueue_result.value());
+      }
     }
   });
 }
@@ -1796,18 +1796,9 @@ auto Http2ClientTransport::CallOutboundLoop(RefCountedPtr<Stream> stream) {
                   if (cancelled) {
                     // Enqueue an RST_STREAM frame immediately upon call
                     // cancellation rather than waiting for CallHandler::OnDone.
-                    absl::StatusOr<StreamWritabilityUpdate> enqueue_result =
-                        stream->EnqueueResetStream(
-                            static_cast<uint32_t>(Http2ErrorCode::kCancel));
-                    GRPC_HTTP2_CLIENT_DLOG
-                        << "Enqueued ResetStream with error code="
-                        << static_cast<uint32_t>(Http2ErrorCode::kCancel)
-                        << " status=" << enqueue_result.status();
-                    if (GPR_LIKELY(enqueue_result.ok())) {
-                      GRPC_UNUSED absl::Status status =
-                          MaybeAddStreamToWritableStreamList(
-                              std::move(stream), enqueue_result.value());
-                    }
+                    EnqueueResetStream(
+                        std::move(stream),
+                        static_cast<uint32_t>(Http2ErrorCode::kCancel));
                   }
                   return absl::OkStatus();
                 });
