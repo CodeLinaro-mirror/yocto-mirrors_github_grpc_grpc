@@ -697,6 +697,9 @@ void grpc_chttp2_transport::WriteSecurityFrameLocked(
   if (data == nullptr) {
     return;
   }
+  if (!closed_with_error.ok()) {
+    return;
+  }
   if (!settings.peer().allow_security_frame()) {
     close_transport_locked(
         this,
