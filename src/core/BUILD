@@ -9744,6 +9744,7 @@ grpc_cc_library(
         "read_context",
         "ref_counted",
         "resource_quota",
+        "resource_quota_telemetry",
         "sleep",
         "status_flag",
         "stream_data_queue",
