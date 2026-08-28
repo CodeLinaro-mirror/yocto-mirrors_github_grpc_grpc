@@ -381,7 +381,19 @@ Http2Status Http2ServerTransport::ProcessIncomingMetadata(T&& frame) {
     is_new_stream = (stream == nullptr);
     // TODO(tjagtap) : [PH2][P2] : Implement initial stream id checks for new
     // streams.
+    // to put the monotonically increasing logic in here
+    // Stream ID monotonicity check
     if (is_new_stream) {
+      if (GPR_UNLIKELY(frame.stream_id <= last_incoming_stream_id_)) {
+        GRPC_HTTP2_SERVER_DLOG
+            << "Http2ServerTransport::ProcessIncomingMetadata Stream ID is not "
+               "strictly monotonically increasing: stream_id="
+            << frame.stream_id
+            << ", last_incoming_stream_id=" << last_incoming_stream_id_;
+        return Http2Status::Http2ConnectionError(
+            Http2ErrorCode::kProtocolError,
+            std::string(RFC9113::kUnknownStreamId));
+      }
       last_incoming_stream_id_ = frame.stream_id;
     }
   } else {
@@ -534,6 +546,9 @@ Http2Status Http2ServerTransport::ProcessIncomingFrame(
     if (!status.IsOk()) {
       return status;
     }
+    // set kro limit int max aiya
+    num_incoming_streams_before_settings_ack_ =
+        std::numeric_limits<uint32_t>::max();
     read_context_.SetMaxHeaderTableSize(settings_->acked().header_table_size());
     read_context_.header_assembler().MaybeSetAllowTrueBinaryMetadataAcked(
         settings_->acked().allow_true_binary_metadata());
@@ -1405,26 +1420,116 @@ std::optional<RefCountedPtr<Stream>> Http2ServerTransport::MakeStream(
                                 settings_->peer().allow_true_binary_metadata());
 }
 
-Http2Status Http2ServerTransport::IncomingStream(
-    ClientMetadataHandle&& metadata, const uint32_t stream_id) {
+ValueOrHttp2Status<bool> Http2ServerTransport::ValidateIncomingStream(
+    const uint32_t stream_id) {
+  // Lockdown / Party shutdown check
   if (shutdown_tracker_.IsPartyShutdownInitiated()) {
     return Http2Status::Http2ConnectionError(
         Http2ErrorCode::kRefusedStream,
         "Transport shutdown initiated (party lockdown).");
   }
+
+  // Shared mutex for shutdown, max concurrent streams, and high memory
+  // pressure checks
+  const uint32_t max_concurrent_streams =
+      settings_->acked().max_concurrent_streams();
+  bool is_max_concurrent_streams_exceeded = false;
+  bool is_high_memory_pressure = false;
+  bool is_overload_protection_triggered = false;
+  bool is_num_incoming_streams_before_settings_ack_exceeded = false;
+
   {
     MutexLock lock(&transport_mutex_);
     if (shutdown_tracker_.IsShutdownInitiated(transport_mutex_)) {
       return Http2Status::Http2ConnectionError(Http2ErrorCode::kRefusedStream,
                                                "Transport is closed.");
     }
+    if (GPR_UNLIKELY(GetActiveStreamCountLocked() >= max_concurrent_streams)) {
+      is_max_concurrent_streams_exceeded = true;
+      transport_write_context_.AddRstFrame(
+          stream_id, static_cast<uint32_t>(Http2ErrorCode::kRefusedStream));
+    } else if (GPR_UNLIKELY(
+                   memory_owner_.RejectNewStreamsUnderHighMemoryPressure())) {
+      // Based on CHTTP2's memory pressure check in parsing.cc
+      is_high_memory_pressure = true;
+      transport_write_context_.AddRstFrame(
+          stream_id, static_cast<uint32_t>(Http2ErrorCode::kEnhanceYourCalm));
+    } else if (GPR_UNLIKELY(max_concurrent_streams_overload_protection_ &&
+                            GetActiveStreamCountLocked() >=
+                                settings_->local().max_concurrent_streams())) {
+      is_overload_protection_triggered = true;
+      transport_write_context_.AddRstFrame(
+          stream_id, static_cast<uint32_t>(Http2ErrorCode::kRefusedStream));
+    } else if (GPR_UNLIKELY(num_incoming_streams_before_settings_ack_ == 0u)) {
+      is_num_incoming_streams_before_settings_ack_exceeded = true;
+      transport_write_context_.AddRstFrame(
+          stream_id, static_cast<uint32_t>(Http2ErrorCode::kEnhanceYourCalm));
+    } else {
+      if (num_incoming_streams_before_settings_ack_ !=
+          std::numeric_limits<uint32_t>::max()) {
+        --num_incoming_streams_before_settings_ack_;
+      }
+    }
+  }
+
+  // Trigger write cycle OUTSIDE the mutex lock if max concurrent streams
+  // limit is exceeded
+  if (GPR_UNLIKELY(is_max_concurrent_streams_exceeded)) {
+    GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::ValidateIncomingStream "
+                           << "Exceeded MAX_CONCURRENT_STREAMS ("
+                           << max_concurrent_streams
+                           << "), refusing stream_id=" << stream_id;
+    TriggerWriteCycleOrHandleError();
+    return false;
+  }
+  // Trigger write cycle OUTSIDE the mutex lock if high memory pressure is
+  // detected.
+  if (GPR_UNLIKELY(is_high_memory_pressure)) {
+    GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::ValidateIncomingStream "
+                           << "Rejecting stream due to high memory pressure, "
+                              "refusing stream_id="
+                           << stream_id;
+    TriggerWriteCycleOrHandleError();
+    return false;
+  }
+  if (GPR_UNLIKELY(is_overload_protection_triggered)) {
+    GRPC_HTTP2_SERVER_DLOG << "Http2ServerTransport::ValidateIncomingStream "
+                           << "Rejecting stream due to overload protection, "
+                              "refusing stream_id="
+                           << stream_id;
+    TriggerWriteCycleOrHandleError();
+    return false;
+  }
+  if (GPR_UNLIKELY(is_num_incoming_streams_before_settings_ack_exceeded)) {
+    GRPC_HTTP2_SERVER_DLOG
+        << "Http2ServerTransport::ValidateIncomingStream "
+        << "Rejecting stream before settings have been acknowledged, "
+           "refusing stream_id="
+        << stream_id;
+    TriggerWriteCycleOrHandleError();
+    return false;
+  }
+  return true;
+}
+
+Http2Status Http2ServerTransport::IncomingStream(
+    ClientMetadataHandle&& metadata, const uint32_t stream_id) {
+  ValueOrHttp2Status<bool> validation_result =
+      ValidateIncomingStream(stream_id);
+  if (GPR_UNLIKELY(!validation_result.IsOk())) {
+    return ValueOrHttp2Status<bool>::TakeStatus(std::move(validation_result));
+  }
+  if (GPR_UNLIKELY(!validation_result.value())) {
+    // Stream rejected (limit exceeded, overload, memory pressure, etc);
+    // RST_STREAM frame queued and write cycle triggered, skip stream creation.
+    return Http2Status::Ok();
   }
 
   GRPC_DCHECK(LookupStream(stream_id) == nullptr);
 
   // TODO(tjagtap) : [PH2][P1] : Evaluate use of
   // SimpleArenaAllocator vs CallArenaAllocator here.
-  RefCountedPtr<Arena> arena = SimpleArenaAllocator(0)->MakeArena();
+  RefCountedPtr<Arena> arena = SimpleArenaAllocator(0u)->MakeArena();
   arena->SetContext<EventEngine>(event_engine_.get());
   CallInitiatorAndHandler call =
       MakeCallPair(std::move(metadata), std::move(arena));
@@ -1944,6 +2049,11 @@ void Http2ServerTransport::ReadChannelArgs(const ChannelArgs& channel_args,
   read_context_.set_soft_limit(args.max_header_list_size_soft_limit);
   keepalive_permit_without_calls_ = args.keepalive_permit_without_calls;
   test_only_ack_pings_ = args.test_only_ack_pings;
+  max_concurrent_streams_overload_protection_ =
+      channel_args.GetBool(GRPC_ARG_MAX_CONCURRENT_STREAMS_OVERLOAD_PROTECTION)
+          .value_or(true);
+  num_incoming_streams_before_settings_ack_ =
+      settings_->local().max_concurrent_streams();
 
   settings_->SetSettingsTimeout(args.settings_timeout);
   if (args.max_usable_hpack_table_size >= 0) {

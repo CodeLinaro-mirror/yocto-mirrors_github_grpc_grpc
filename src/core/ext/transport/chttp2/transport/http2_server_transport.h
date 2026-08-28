@@ -496,6 +496,9 @@ class Http2ServerTransport final : public ServerTransport,
   std::optional<RefCountedPtr<Stream>> MakeStream(
       CallInitiator&& call_initiator, uint32_t stream_id);
 
+  // Validates the incoming stream ID before the stream is created.
+  ValueOrHttp2Status<bool> ValidateIncomingStream(uint32_t stream_id);
+
   Http2Status IncomingStream(ClientMetadataHandle&& metadata,
                              uint32_t stream_id);
 
@@ -766,6 +769,8 @@ class Http2ServerTransport final : public ServerTransport,
   // TODO(tjagtap) [PH2][P2][BDP] Remove this when the BDP code is done.
   Waker periodic_updates_waker_;
   TarpitManager tarpit_manager_;
+  bool max_concurrent_streams_overload_protection_ = true;
+  uint32_t num_incoming_streams_before_settings_ack_ = 0u;
 };
 
 // TODO(tjagtap) : [PH2][P1] : Handle the case where a Server receives two
