@@ -211,6 +211,15 @@ class Fuzzer {
       default:
         break;
     }
+    // If the subchannel was already in READY state before the switch above,
+    // none of the cases will have called SetConnectivityState() or ticked
+    // the event engine. However, if the LB policy was in IDLE state, the call
+    // to ExitIdleLocked() above created a new SubchannelList and registered a
+    // watch on this subchannel, which enqueued an initial connectivity state
+    // notification (READY) onto the WorkSerializer. We must tick the event
+    // engine here to drain the WorkSerializer and allow the LB policy to
+    // process the notification and transition to READY before checking state_.
+    event_engine_->TickUntilIdle();
     // Make sure the LB policy is now reporting READY state.
     ASSERT_EQ(state_, GRPC_CHANNEL_READY);
     // Make sure the picker is returning the selected subchannel.
