@@ -350,6 +350,15 @@ class ServerContextBase {
   /// functionality. Instead, use auth_context.
   std::string peer() const;
 
+  /// Return the local (server-side) address of the connection this call
+  /// arrived on, in URI form (e.g. "ipv4:10.0.0.1:443" or
+  /// "ipv6:%5B::1%5D:443"). Returns "unknown" if the transport does not
+  /// expose socket addresses (e.g. inproc), and an empty string if no call is
+  /// bound to this context.
+  /// WARNING: like peer(), this value is not authenticated and must not be
+  /// used for authentication or authorization. Use auth_context() instead.
+  std::string local_address() const;
+
   /// Get the census context associated with this server call.
   const struct census_context* census_context() const;
 

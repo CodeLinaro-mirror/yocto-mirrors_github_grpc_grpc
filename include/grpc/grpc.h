@@ -251,6 +251,15 @@ GRPCAPI grpc_call_error grpc_call_start_batch(grpc_call* call,
     functionality. Instead, use grpc_auth_context. */
 GRPCAPI char* grpc_call_get_peer(grpc_call* call);
 
+/** Returns a newly allocated string containing the local address of the
+    connection that this call is using. The string is in the same uri format
+    as the one returned by grpc_call_get_peer() (e.g. "ipv4:127.0.0.1:50051",
+    "ipv6:[::1]:50051", or "unix:/path/to/socket").
+    Currently only guaranteed to be populated for server calls; client calls
+    may return "unknown".
+    The returned string should be disposed of with gpr_free(). */
+GRPCAPI char* grpc_call_get_local_address(grpc_call* call);
+
 struct census_context;
 
 /** Set census context for a call; Must be called before first call to
