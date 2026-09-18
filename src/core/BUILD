@@ -8521,6 +8521,10 @@ grpc_cc_library(
     name = "grpc_lb_policy_outlier_detection",
     srcs = [
         "load_balancing/outlier_detection/outlier_detection.cc",
+        "load_balancing/outlier_detection/outlier_detection_metrics.cc",
+    ],
+    hdrs = [
+        "load_balancing/outlier_detection/outlier_detection_metrics.h",
     ],
     external_deps = [
         "absl/base:core_headers",
@@ -8537,13 +8541,16 @@ grpc_cc_library(
         "delegating_helper",
         "experiments",
         "grpc_check",
+        "grpc_lb_policy_weighted_target",
         "grpc_outlier_detection_header",
         "health_check_client",
+        "instrument",
         "iomgr_fwd",
         "json",
         "lb_policy",
         "lb_policy_factory",
         "lb_policy_registry",
+        "metrics",
         "pollset_set",
         "ref_counted",
         "resolved_address",
@@ -9496,6 +9503,7 @@ grpc_cc_library(
         ":header_assembler",
         ":http2_status",
         ":http2_transport",
+        ":http2_transport_stats",
         ":metadata_info",
         ":ph2_stream",
         ":shared_bit_gen",
@@ -9662,6 +9670,7 @@ grpc_cc_library(
         "http2_settings_promises",
         "http2_status",
         "http2_transport",
+        "http2_transport_stats",
         "http2_ztrace_collector",
         "if",
         "inter_activity_mutex",
@@ -9761,6 +9770,7 @@ grpc_cc_library(
         "http2_settings_promises",
         "http2_status",
         "http2_transport",
+        "http2_transport_stats",
         "http2_ztrace_collector",
         "if",
         "inter_activity_mutex",
@@ -9864,6 +9874,21 @@ grpc_cc_library(
         "stats_data",
         "//:grpc_core_credentials_header",
         "//:grpc_public_hdrs",
+    ],
+)
+
+grpc_cc_library(
+    name = "http2_transport_stats",
+    hdrs = [
+        "ext/transport/chttp2/transport/http2_transport_stats.h",
+    ],
+    deps = [
+        "channel_args",
+        "http2_stats_collector",
+        "stats_data",
+        "//:gpr_platform",
+        "//:grpc_core_credentials_header",
+        "//:transport_auth_context",
     ],
 )
 
