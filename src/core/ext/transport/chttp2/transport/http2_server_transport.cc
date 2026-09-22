@@ -1427,6 +1427,18 @@ std::optional<RefCountedPtr<Stream>> Http2ServerTransport::MakeStream(
                                 settings_->peer().allow_true_binary_metadata());
 }
 
+// Based on CHTTP2's use of GetConnectionMaxConcurrentRequests in parsing.cc
+void Http2ServerTransport::UpdateMaxConcurrentStreamsFromStreamQuota() {
+  uint32_t current_open_streams = 0;
+  {
+    MutexLock lock(&transport_mutex_);
+    current_open_streams = GetActiveStreamCountLocked();
+  }
+  const uint32_t max_concurrent_streams =
+      stream_quota_->GetConnectionMaxConcurrentRequests(current_open_streams);
+  settings_->mutable_local().UpdateMaxConcurrentStreams(max_concurrent_streams);
+}
+
 Http2Status Http2ServerTransport::ValidateIncomingStream(
     const uint32_t stream_id) {
   // 1. Transport shutdown & closed checks.
@@ -1521,6 +1533,7 @@ Http2Status Http2ServerTransport::IncomingStream(
   }
   RefCountedPtr<Stream> stream = std::move(result.value());
   AddToStreamList(stream);
+  UpdateMaxConcurrentStreamsFromStreamQuota();
   stream->SetInitialMetadataReceived();
 
   stream->GetCallInitiator().SpawnGuarded(
@@ -2147,6 +2160,7 @@ Http2ServerTransport::Http2ServerTransport(
               ->memory_quota()
               ->CreateMemoryAllocator("http2_server"),
           kInitialCallArenaSize)),
+      stream_quota_(channel_args.GetObject<ResourceQuota>()->stream_quota()),
       flow_control_(
           /*peer_name=*/read_context_.peer_string().as_string_view(),
           channel_args.GetBool(GRPC_ARG_HTTP2_BDP_PROBE).value_or(true),
