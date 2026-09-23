@@ -31,6 +31,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "src/core/call/call_filters.h"
 #include "src/core/call/call_spine.h"
@@ -39,6 +40,7 @@
 #include "src/core/call/metadata_batch.h"
 #include "src/core/channelz/channelz.h"
 #include "src/core/ext/transport/chttp2/transport/frame.h"
+#include "src/core/ext/transport/chttp2/transport/http2_settings.h"
 #include "src/core/ext/transport/chttp2/transport/http2_status.h"
 #include "src/core/ext/transport/chttp2/transport/transport_common.h"
 #include "src/core/lib/channel/channel_args.h"
@@ -50,6 +52,7 @@
 #include "src/core/lib/resource_quota/arena.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/lib/slice/slice_buffer.h"
+#include "src/core/telemetry/stats_data.h"
 #include "src/core/util/crash.h"
 #include "src/core/util/orphanable.h"
 #include "test/core/transport/chttp2/http2_common_test_inputs.h"
@@ -1501,6 +1504,103 @@ TEST_F(Http2ClientTransportTest, TestActiveStreamAllowedToDrainAfterGoaway) {
   std::shared_ptr<EventSequenceEndpoint::Step> step3 = endpoint()->NewStep();
   AddTransportCloseExpectations(step3.get());
   step3->Wait();
+}
+
+TEST_F(Http2ClientTransportTest,
+       TestHttp2ClientTransportRecordsDataFrameAndMessageStats) {
+  // Verifies that Http2ClientTransport records:
+  // 1. http2_send_message_size (RecordSendMessageSize) when sending a message.
+  // 2. http2_read_data_frame_size (RecordReadDataFrameSize) when receiving a
+  //    DATA frame.
+  ExecCtx ctx;
+
+  // Step 1: Initialize the client transport with BDP probe disabled and
+  // exchange initial settings.
+  InitTransport(GetChannelArgs().Set(GRPC_ARG_HTTP2_BDP_PROBE, false));
+  SpawnTransportLoopsAndExchangeSettings();
+
+  const Http2GlobalStatsTestHelper stats_helper;
+
+  // Step 2: Client starts a call, sends a message, and half-closes the stream.
+  // Server responds with initial metadata, a DATA frame, and trailing metadata.
+  StrictMock<MockFunction<void()>> on_done;
+  EXPECT_CALL(on_done, Call());
+
+  const std::string client_message_payload = "Hello!";
+  const std::string server_response_payload = "Response";
+
+  const std::shared_ptr<EventSequenceEndpoint::Step> step =
+      endpoint()->NewStep();
+  step->ThenExpectWrite({
+      helper_.SerializedHeaderFrame(
+          std::string(kPathDemoServiceStep.begin(), kPathDemoServiceStep.end()),
+          /*stream_id=*/1u, /*end_headers=*/true, /*end_stream=*/false),
+  });
+  step->ThenExpectWrite({
+      helper_.SerializedDataFrame(client_message_payload, /*stream_id=*/1u,
+                                  /*end_stream=*/true),
+  });
+  step->ThenPerformRead({
+      helper_.SerializedHeaderFrame(
+          std::string(kPathDemoServiceStep.begin(), kPathDemoServiceStep.end()),
+          /*stream_id=*/1u, /*end_headers=*/true, /*end_stream=*/false),
+      helper_.SerializedDataFrame(server_response_payload, /*stream_id=*/1u,
+                                  /*end_stream=*/false),
+      helper_.SerializedHeaderFrame(
+          std::string(kPathDemoServiceStep.begin(), kPathDemoServiceStep.end()),
+          /*stream_id=*/1u, /*end_headers=*/true, /*end_stream=*/true),
+  });
+
+  CallInitiator initiator = StartCall(TestInitialMetadata());
+  initiator.SpawnGuarded(
+      "test-send", [initiator, client_message_payload]() mutable {
+        return Seq(
+            initiator.PushMessage(Arena::MakePooled<Message>(
+                SliceBuffer(Slice::FromCopiedString(client_message_payload)),
+                0)),
+            [initiator = initiator]() mutable {
+              return initiator.FinishSends();
+            },
+            []() { return absl::OkStatus(); });
+      });
+  initiator.SpawnInfallible("test-wait", [initiator, &on_done]() mutable {
+    return Seq(
+        initiator.PullServerInitialMetadata(),
+        [](std::optional<ServerMetadataHandle> header) {
+          EXPECT_TRUE(header.has_value());
+        },
+        initiator.PullMessage(),
+        [](ServerToClientNextMessage message) {
+          EXPECT_TRUE(message.ok());
+          EXPECT_TRUE(message.has_value());
+        },
+        initiator.PullServerTrailingMetadata(),
+        [&on_done](ServerMetadataHandle /*metadata*/) mutable {
+          on_done.Call();
+          return Empty{};
+        });
+  });
+
+  step->Wait();
+  event_engine()->Tick();
+
+  // Step 3: Verify that http2_send_message_size and http2_read_data_frame_size
+  // were recorded accurately.
+  stats_helper.ExpectHistogramBucketCountDiff(
+      Http2GlobalStats::Histogram::kHttp2SendMessageSize,
+      static_cast<int>(client_message_payload.size()), 1u);
+
+  const size_t expected_read_data_frame_size =
+      server_response_payload.size() + kGrpcHeaderSizeInBytes;
+  stats_helper.ExpectHistogramBucketCountDiff(
+      Http2GlobalStats::Histogram::kHttp2ReadDataFrameSize,
+      static_cast<int>(expected_read_data_frame_size), 1u);
+
+  // Step 4: Tear down the transport.
+  const std::shared_ptr<EventSequenceEndpoint::Step> teardown_step =
+      endpoint()->NewStep();
+  AddTransportCloseExpectations(teardown_step.get());
+  teardown_step->Wait();
 }
 
 // TODO(tjagtap) : [PH2][P3] Write tests similar to

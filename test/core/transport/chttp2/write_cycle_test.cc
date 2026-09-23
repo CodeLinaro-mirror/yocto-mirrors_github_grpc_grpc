@@ -19,6 +19,7 @@
 #include "src/core/ext/transport/chttp2/transport/write_cycle.h"
 
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <tuple>
@@ -26,11 +27,15 @@
 #include <vector>
 
 #include "src/core/ext/transport/chttp2/transport/frame.h"
+#include "src/core/ext/transport/chttp2/transport/http2_transport_stats.h"
 #include "src/core/ext/transport/chttp2/transport/transport_common.h"
 #include "src/core/ext/transport/chttp2/transport/write_size_policy.h"
+#include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/lib/slice/slice_buffer.h"
+#include "src/core/telemetry/stats_data.h"
 #include "test/core/test_util/test_config.h"
+#include "test/core/transport/chttp2/http2_common_test_inputs.h"
 #include "gtest/gtest.h"
 #include "absl/strings/string_view.h"
 
@@ -333,7 +338,9 @@ class TransportWriteContextTest : public ::testing::TestWithParam<bool> {
     return transport_write_context_;
   }
 
-  void StartWriteCycle() { transport_write_context_.StartWriteCycle(); }
+  void StartWriteCycle(Http2TransportStats* http2_transport_stats = nullptr) {
+    transport_write_context_.StartWriteCycle(http2_transport_stats);
+  }
   void EndWriteCycle() { transport_write_context_.EndWriteCycle(); }
 
  private:
@@ -488,6 +495,110 @@ TEST_P(TransportWriteContextTest, QueuesAndSerializesRstStreams) {
   EXPECT_EQ(write_cycle2.GetRegularFrameCount(), 0u);
   write_cycle2.EndWrite(/*success=*/true);
   EndWriteCycle();
+}
+
+// This test verifies that a full write cycle through TransportWriteContext and
+// WriteCycle accurately records all 5 write-cycle HTTP/2 telemetry stats
+// (writes begun, write target size, write data frame size, settings writes,
+// and pings sent).
+// Assertions:
+// - StartWriteCycle increments http2_writes_begun by 1 and records
+//   GetTargetWriteSize() in http2_write_target_size (both per-transport and
+//   globally).
+// - Queuing frames without serializing does not increment frame stats.
+// - SerializeUrgentFrames and SerializeRegularFrames increment
+//   http2_settings_writes and http2_pings_sent only for non-ACK frames, and
+//   record each serialized Http2DataFrame's payload length in
+//   http2_write_data_frame_size.
+TEST_P(TransportWriteContextTest, RecordsAllWriteCycleStatsEndToEnd) {
+  Http2TransportStats http2_transport_stats((ChannelArgs()));
+  const testing::Http2GlobalStatsTestHelper stats_helper;
+
+  // Step 1: Start the write cycle with http2_transport_stats, matching
+  // MultiplexerLoop.
+  StartWriteCycle(&http2_transport_stats);
+  WriteCycle& write_cycle = GetWriteCycle();
+  const size_t target_write_size = write_cycle.GetTargetWriteSize();
+
+  // Verify per-transport Http2Stats view for writes_begun and
+  // write_target_size.
+  const Http2Stats& transport_stats =
+      http2_transport_stats.GetStatsCollector()->View();
+  EXPECT_EQ(transport_stats.http2_writes_begun, 1u);
+  const int local_target_bucket =
+      transport_stats.http2_write_target_size.BucketFor(
+          static_cast<int>(target_write_size));
+  EXPECT_EQ(
+      transport_stats.http2_write_target_size.buckets()[local_target_bucket],
+      1u);
+
+  // Step 2: Queue DATA, SETTINGS (non-ACK and ACK), and PING (non-ACK and ACK)
+  // frames into the write cycle.
+  FrameSender frame_sender = write_cycle.GetFrameSender();
+  frame_sender.AddRegularFrame(
+      Http2DataFrame{/*stream_id=*/1u, /*end_stream=*/false,
+                     SliceBuffer(Slice::FromCopiedString(kData1))});
+  frame_sender.AddRegularFrame(
+      Http2DataFrame{/*stream_id=*/1u, /*end_stream=*/true, SliceBuffer()});
+  frame_sender.AddRegularFrame(Http2SettingsFrame{/*ack=*/false, {}});
+  frame_sender.AddRegularFrame(Http2SettingsFrame{/*ack=*/true, {}});
+  frame_sender.AddRegularFrame(Http2PingFrame{/*ack=*/false, 1111u});
+  frame_sender.AddRegularFrame(Http2PingFrame{/*ack=*/true, 2222u});
+  frame_sender.AddUrgentFrame(Http2PingFrame{/*ack=*/false, 3333u});
+
+  // Verify that frame serialization stats are not recorded before Serialize*
+  // is called.
+  stats_helper.ExpectCounterDiff(Http2GlobalStats::Counter::kHttp2WritesBegun,
+                                 1u);
+  stats_helper.ExpectCounterDiff(
+      Http2GlobalStats::Counter::kHttp2SettingsWrites, 0u);
+  stats_helper.ExpectCounterDiff(Http2GlobalStats::Counter::kHttp2PingsSent,
+                                 0u);
+
+  // Step 3: Serialize both urgent and regular frames with
+  // http2_transport_stats, matching MaybeWriteUrgentFrames and
+  // SerializeAndWrite in transport.
+  bool reset_ping_clock = false;
+  const SliceBuffer urgent_serialized = write_cycle.SerializeUrgentFrames(
+      WriteCycle::SerializeStats{reset_ping_clock, &http2_transport_stats});
+  EXPECT_GT(urgent_serialized.Length(), 0u);
+
+  const SliceBuffer regular_serialized = write_cycle.SerializeRegularFrames(
+      WriteCycle::SerializeStats{reset_ping_clock, &http2_transport_stats});
+  EXPECT_GT(regular_serialized.Length(), 0u);
+
+  // Step 4: Complete the write cycle.
+  write_cycle.BeginWrite(regular_serialized.Length());
+  write_cycle.EndWrite(/*success=*/true);
+  EndWriteCycle();
+
+  // Step 5: Verify all 5 write-cycle metrics in global stats.
+  // 1. http2_writes_begun: 1 write cycle started.
+  stats_helper.ExpectCounterDiff(Http2GlobalStats::Counter::kHttp2WritesBegun,
+                                 1u);
+
+  // 2. http2_write_target_size: recorded once in the bucket for
+  // target_write_size.
+  stats_helper.ExpectHistogramBucketCountDiff(
+      Http2GlobalStats::Histogram::kHttp2WriteTargetSize,
+      static_cast<int>(target_write_size), 1u);
+
+  // 3. http2_write_data_frame_size: 1 frame in kData1.size() bucket (5 bytes)
+  //    and 1 frame in 0-byte bucket (empty END_STREAM DATA frame).
+  stats_helper.ExpectHistogramBucketCountDiff(
+      Http2GlobalStats::Histogram::kHttp2WriteDataFrameSize,
+      static_cast<int>(kData1.size()), 1u);
+  stats_helper.ExpectHistogramBucketCountDiff(
+      Http2GlobalStats::Histogram::kHttp2WriteDataFrameSize, 0, 1u);
+
+  // 4. http2_settings_writes: 1 non-ACK SETTINGS frame counted; ACK ignored.
+  stats_helper.ExpectCounterDiff(
+      Http2GlobalStats::Counter::kHttp2SettingsWrites, 1u);
+
+  // 5. http2_pings_sent: 2 non-ACK PING frames counted (1 regular + 1 urgent);
+  //    ACK ignored.
+  stats_helper.ExpectCounterDiff(Http2GlobalStats::Counter::kHttp2PingsSent,
+                                 2u);
 }
 
 INSTANTIATE_TEST_SUITE_P(TransportWriteContextTest, TransportWriteContextTest,

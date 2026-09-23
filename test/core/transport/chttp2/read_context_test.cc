@@ -24,6 +24,7 @@
 #include "src/core/ext/transport/chttp2/transport/frame.h"
 #include "src/core/ext/transport/chttp2/transport/http2_status.h"
 #include "src/core/ext/transport/chttp2/transport/http2_transport.h"
+#include "src/core/ext/transport/chttp2/transport/http2_transport_stats.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/lib/slice/slice_buffer.h"
 #include "src/core/util/grpc_check.h"
@@ -46,7 +47,7 @@ class ReadContextTest : public ::testing::TestWithParam<bool> {
     readContext.emplace(
         /*max_new_streams_per_read_cycle=*/32u, mock_endpoint->promise_endpoint,
         /*is_client=*/GetParam(), GrpcErrors::kMaxSecurityFrameSize,
-        /*ping_on_rst_stream_percent=*/0u);
+        /*ping_on_rst_stream_percent=*/0u, Http2TransportStats());
   }
 
   std::optional<util::testing::MockPromiseEndpoint> mock_endpoint;
@@ -67,7 +68,7 @@ TEST_P(ReadContextTest, MaxNewStreamsZeroIsInvalid) {
       ReadContext(/*max_new_streams_per_read_cycle=*/0u,
                   mock_endpoint->promise_endpoint,
                   /*is_client=*/GetParam(), GrpcErrors::kMaxSecurityFrameSize,
-                  /*ping_on_rst_stream_percent=*/0u),
+                  /*ping_on_rst_stream_percent=*/0u, Http2TransportStats()),
       "0 is invalid");
 }
 
@@ -219,10 +220,10 @@ TEST_P(ReadContextTest, DidReceiveDuplicateMetadataChecks) {
 
 TEST(GetPeerStringTest, GetPeerString) {
   util::testing::MockPromiseEndpoint mock_endpoint(1234);
-  ReadContext readContext(/*max_new_streams_per_read_cycle=*/32u,
-                          mock_endpoint.promise_endpoint,
-                          /*is_client=*/true, GrpcErrors::kMaxSecurityFrameSize,
-                          /*ping_on_rst_stream_percent=*/0u);
+  ReadContext readContext(
+      /*max_new_streams_per_read_cycle=*/32u, mock_endpoint.promise_endpoint,
+      /*is_client=*/true, GrpcErrors::kMaxSecurityFrameSize,
+      /*ping_on_rst_stream_percent=*/0u, Http2TransportStats());
   EXPECT_EQ(readContext.peer_string(),
             Slice::FromCopiedString("ipv4:127.0.0.1:1234"));
 }
@@ -498,7 +499,7 @@ TEST_P(ReadContextTest, ResetFrameTriggersPingBasedOnPercent) {
   ReadContext context_100(
       /*max_new_streams_per_read_cycle=*/32u, mock_endpoint->promise_endpoint,
       /*is_client=*/false, GrpcErrors::kMaxSecurityFrameSize,
-      /*ping_on_rst_stream_percent=*/100u);
+      /*ping_on_rst_stream_percent=*/100u, Http2TransportStats());
 
   Http2FrameHeader frame_header;
   frame_header.length = 0u;
@@ -516,7 +517,7 @@ TEST_P(ReadContextTest, ResetFrameTriggersPingBasedOnPercent) {
   ReadContext context_0(
       /*max_new_streams_per_read_cycle=*/32u, mock_endpoint->promise_endpoint,
       /*is_client=*/false, GrpcErrors::kMaxSecurityFrameSize,
-      /*ping_on_rst_stream_percent=*/0u);
+      /*ping_on_rst_stream_percent=*/0u, Http2TransportStats());
 
   context_0.SetCurrentFrameHeader(frame_header);
 
