@@ -32,6 +32,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/core/call/call_arena_allocator.h"
 #include "src/core/call/call_destination.h"
 #include "src/core/call/call_spine.h"
 #include "src/core/call/message.h"
@@ -108,6 +109,7 @@ using StreamWritabilityUpdate =
 // TODO(tjagtap) : [PH2][P3] : Delete this comment after CHTTP2 deletion.
 
 constexpr bool kIsClient = false;
+constexpr size_t kInitialCallArenaSize = 1024;
 
 //////////////////////////////////////////////////////////////////////////////
 // Channelz and ZTrace
@@ -1392,9 +1394,7 @@ Http2Status Http2ServerTransport::IncomingStream(
 
   GRPC_DCHECK(LookupStream(stream_id) == nullptr);
 
-  // TODO(tjagtap) : [PH2][P1] : Evaluate use of
-  // SimpleArenaAllocator vs CallArenaAllocator here.
-  RefCountedPtr<Arena> arena = SimpleArenaAllocator(0)->MakeArena();
+  RefCountedPtr<Arena> arena = call_arena_allocator_->MakeArena();
   arena->SetContext<EventEngine>(event_engine_.get());
   CallInitiatorAndHandler call =
       MakeCallPair(std::move(metadata), std::move(arena));
@@ -2025,6 +2025,11 @@ Http2ServerTransport::Http2ServerTransport(
       memory_owner_(channel_args.GetObject<ResourceQuota>()
                         ->memory_quota()
                         ->CreateMemoryOwner()),
+      call_arena_allocator_(MakeRefCounted<CallArenaAllocator>(
+          channel_args.GetObject<ResourceQuota>()
+              ->memory_quota()
+              ->CreateMemoryAllocator("http2_server"),
+          kInitialCallArenaSize)),
       flow_control_(
           /*peer_name=*/read_context_.peer_string().as_string_view(),
           channel_args.GetBool(GRPC_ARG_HTTP2_BDP_PROBE).value_or(true),
