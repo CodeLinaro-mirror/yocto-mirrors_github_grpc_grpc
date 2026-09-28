@@ -296,7 +296,7 @@ TEST_F(Http2ServerTransportTest, TestHttp2ServerTransportWriteFromCall) {
 }
 
 TEST_F(Http2ServerTransportTest, ClientInitiatedCancellationTest) {
-  InitTransport(GetChannelArgs().Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false));
+  InitTransport(GetChannelArgs());
   SpawnTransportLoopsAndExchangeSettings();
   StrictMock<MockFunction<void(bool)>> on_done;
   EXPECT_CALL(on_done, Call(true));
@@ -848,9 +848,7 @@ TEST_F(Http2ServerTransportTest, TestKeepAliveTimeout) {
 
 TEST_F(Http2ServerTransportTest, TestServerGracefulGoAway) {
   ExecCtx ctx;
-  // Disable tarpitting to ensure RST_STREAM immediately closes streams for
-  // graceful GOAWAY validation without tarpit delays.
-  InitTransport(GetChannelArgs().Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false));
+  InitTransport(GetChannelArgs());
   SpawnTransportLoopsAndExchangeSettings();
 
   // Step 1: Client initiates stream 1.
@@ -999,10 +997,6 @@ TEST_F(Http2ServerTransportTest, TestServerGracefulGoAway) {
 
 TEST_F(Http2ServerTransportTest, PingOnRstStreamTest) {
   InitTransport(GetChannelArgs()
-                    // Disable tarpitting to ensure RST_STREAM immediately
-                    // closes streams for ping on RST stream validation without
-                    // tarpit delays.
-                    .Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false)
                     .Set("grpc.http2.ping_on_rst_stream_percent", 100)
                     // Disable all sources of pings except for RST streams.
                     .Set(GRPC_ARG_KEEPALIVE_TIME_MS, INT_MAX)
@@ -1687,15 +1681,17 @@ TEST_F(Http2ServerTransportTest, ServerTrailingMetadataTarpitTest) {
   teardown_step->Wait();
 }
 
-// TODO(tjagtap): [PH2][P2] Re-enable this test once incoming stream validation
-// for MAX_CONCURRENT_STREAMS is implemented on the server.
-// Verifies that tarpit manager delays closing a stream when the client
-// sends a RST_STREAM frame.
+// RST_STREAM received from the client must close the stream immediately, so
+// that the stream no longer counts towards MAX_CONCURRENT_STREAMS.
 TEST_F(Http2ServerTransportTest,
-       DISABLED_TarpitRejectsNewStreamWhenMaxConcurrentStreamsExceeded) {
+       ClientRstStreamWithTarpitEnabledFreesConcurrentStreamSlot) {
   ExecCtx ctx;
-  InitTransport(GetChannelArgs().Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1));
 
+  // Step 1: Initialize the transport with MAX_CONCURRENT_STREAMS = 1 and
+  // exchange settings, so that the server allows only one open stream.
+  InitTransport(GetChannelArgs()
+                    .Set(GRPC_ARG_HTTP_ALLOW_TARPIT, true)
+                    .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1));
   const std::vector<Http2SettingsFrame::Setting> server_settings = {
       {Http2Settings::kMaxConcurrentStreamsWireId, 1u},
       {Http2Settings::kInitialWindowSizeWireId, 65535u},
@@ -1706,51 +1702,61 @@ TEST_F(Http2ServerTransportTest,
 
   const auto factory_factory = [](CallHandler call_handler) {
     return [call_handler]() mutable {
-      return TrySeq(call_handler.PullClientInitialMetadata(),
-                    [call_handler](ClientMetadataHandle /*metadata*/) mutable {
-                      return Map(call_handler.WasCancelled(),
-                                 [](const bool /*cancelled*/) -> absl::Status {
-                                   return absl::OkStatus();
-                                 });
-                    });
+      return TrySeq(
+          call_handler.PullClientInitialMetadata(),
+          [call_handler](const ClientMetadataHandle metadata) mutable {
+            const Slice* const path = metadata->get_pointer(HttpPathMetadata());
+            if (path != nullptr &&
+                path->as_string_view() == "/demo.Service/Step3") {
+              call_handler.SpawnPushServerInitialMetadata(
+                  ServerMetadataFromStatus(absl::OkStatus()));
+            }
+            return Map(call_handler.WasCancelled(),
+                       [](const bool /*cancelled*/) -> absl::Status {
+                         return absl::OkStatus();
+                       });
+          });
     };
   };
   AddStream(factory_factory);
 
-  // Client sends HEADERS (Stream 1), RST_STREAM (Stream 1), and HEADERS (Stream
-  // 3) in a single read. With tarpitting enabled, the server transport
-  // intercepts the reset via TarpitManager and delays stream closure. As stream
-  // 1 remains active in stream_list_ for some tarpit duration, the server
-  // rejects the new stream 3.
-  const std::shared_ptr<EventSequenceEndpoint::Step> client_frames_step =
+  const std::shared_ptr<EventSequenceEndpoint::Step> step =
       endpoint()->NewStep();
-  client_frames_step->ThenPerformRead({
+  step->ThenPerformRead({
       helper_.SerializedHeaderFrame(
           std::string(kPathDemoServiceStep.begin(), kPathDemoServiceStep.end()),
-          /*stream_id=*/1,
-          /*end_headers=*/true,
-          /*end_stream=*/false),
+          /*stream_id=*/1u, /*end_headers=*/true, /*end_stream=*/false),
       helper_.SerializedResetStreamFrame(
-          /*stream_id=*/1,
-          /*error_code=*/static_cast<uint32_t>(Http2ErrorCode::kCancel)),
-      helper_.SerializedHeaderFrame(
-          std::string(kPathDemoServiceStep.begin(), kPathDemoServiceStep.end()),
-          /*stream_id=*/3,
-          /*end_headers=*/true,
-          /*end_stream=*/false),
-  });
-  client_frames_step->ThenExpectWrite({
-      helper_.SerializedResetStreamFrame(
-          /*stream_id=*/3,
+          /*stream_id=*/1u,
           /*error_code=*/
-          static_cast<uint32_t>(Http2ErrorCode::kRefusedStream)),
+          Http2ErrorCodeToFrameErrorCode(Http2ErrorCode::kCancel)),
+      helper_.SerializedHeaderFrame(std::string(kPathDemoServiceStep3.begin(),
+                                                kPathDemoServiceStep3.end()),
+                                    /*stream_id=*/3u, /*end_headers=*/true,
+                                    /*end_stream=*/false),
   });
-  client_frames_step->Wait();
+
+  step->ThenExpectWrite({
+      helper_.SerializedHeaderFrame(
+          std::string(kGrpcStatusOK.begin(), kGrpcStatusOK.end()),
+          /*stream_id=*/3u, /*end_headers=*/true, /*end_stream=*/false),
+  });
+  step->Wait();
 
   // Teardown the transport.
   const std::shared_ptr<EventSequenceEndpoint::Step> teardown_step =
       endpoint()->NewStep();
-  AddTransportCloseExpectations(teardown_step.get(), /*last_stream_id=*/3);
+  teardown_step->ThenFailRead(absl::UnavailableError(kConnectionClosed));
+  teardown_step->ThenExpectWrite({
+      helper_.SerializedGoawayFrame(
+          /*debug_data=*/kConnectionClosed, /*last_stream_id=*/3u,
+          /*error_code=*/
+          Http2ErrorCodeToFrameErrorCode(Http2ErrorCode::kInternalError)),
+      helper_.SerializedResetStreamFrame(
+          /*stream_id=*/3u,
+          /*error_code=*/
+          Http2ErrorCodeToFrameErrorCode(Http2ErrorCode::kInternalError)),
+  });
   teardown_step->Wait();
 }
 
@@ -2157,7 +2163,6 @@ TEST_F(Http2ServerTransportTest,
   // the initial settings handshake.
   InitTransport(
       GetChannelArgs()
-          .Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false)
           .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS_OVERLOAD_PROTECTION, false)
           .Set(GRPC_ARG_KEEPALIVE_TIME_MS, std::numeric_limits<int>::max()));
   SpawnTransportLoopsAndExchangeSettings();
@@ -2352,13 +2357,8 @@ TEST_F(Http2ServerTransportTest,
   // to be accepted.
   ExecCtx ctx;
 
-  // Step 1: Initialize transport with MAX_CONCURRENT_STREAMS = 2 and tarpit
-  // disabled so RST_STREAM immediately closes streams.
-  InitTransport(GetChannelArgs()
-                    // Disable tarpitting to ensure RST_STREAM immediately
-                    // closes streams
-                    .Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false)
-                    .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 2));
+  // Step 1: Initialize transport with MAX_CONCURRENT_STREAMS = 2.
+  InitTransport(GetChannelArgs().Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 2));
 
   const std::shared_ptr<EventSequenceEndpoint::Step> handshake_step =
       endpoint()->NewStep();
@@ -2626,11 +2626,8 @@ TEST_F(Http2ServerTransportTest,
   // last_incoming_stream_id (Stream 3).
   ExecCtx ctx;
 
-  // Step 1: Initialize transport with MAX_CONCURRENT_STREAMS = 1 and tarpit
-  // disabled.
-  InitTransport(GetChannelArgs()
-                    .Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false)
-                    .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1));
+  // Step 1: Initialize transport with MAX_CONCURRENT_STREAMS = 1.
+  InitTransport(GetChannelArgs().Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1));
 
   const std::vector<Http2SettingsFrame::Setting> server_settings = {
       {Http2Settings::kMaxConcurrentStreamsWireId, 1u},
@@ -2765,9 +2762,7 @@ TEST_F(Http2ServerTransportTest,
   ExecCtx ctx;
 
   // Step 1: Initialize transport with MAX_CONCURRENT_STREAMS = 1.
-  InitTransport(GetChannelArgs()
-                    .Set(GRPC_ARG_HTTP_ALLOW_TARPIT, false)
-                    .Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1));
+  InitTransport(GetChannelArgs().Set(GRPC_ARG_MAX_CONCURRENT_STREAMS, 1));
 
   const std::vector<Http2SettingsFrame::Setting> server_settings = {
       {Http2Settings::kMaxConcurrentStreamsWireId, 1u},

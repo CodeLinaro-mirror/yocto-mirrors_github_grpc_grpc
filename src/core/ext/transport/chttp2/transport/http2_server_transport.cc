@@ -523,17 +523,7 @@ Http2Status Http2ServerTransport::ProcessIncomingFrame(
           << "Http2ServerTransport::ProcessIncomingFrame(ResetStreamFrame) "
              "ignoring RST_STREAM for already tarpitted stream_id="
           << frame.stream_id;
-    } else if (tarpit_manager_.allow_tarpit()) {
-      // If tarpit is enabled, we will enqueue the RST_STREAM frame to the
-      // Tarpit manager and delay the stream reset.
-      StatusFlag tarpit_status = tarpit_manager_.RequestTarpitIncomingReset(
-          stream->GetStreamId(), std::move(status));
-      if (GPR_UNLIKELY(!tarpit_status.ok())) {
-        return Http2Status::Http2ConnectionError(
-            Http2ErrorCode::kInternalError, "Failed to enqueue tarpit entry");
-      }
     } else {
-      // If tarpit is not enabled, we will process the RST_STREAM frame inline.
       HandleStreamStateChange(*stream,
                               stream->OnResetReceived(std::move(status)));
     }
@@ -1769,13 +1759,7 @@ void Http2ServerTransport::ActOnTarpitEntries(
       continue;
     }
     stream->SetTarpitCompleted();
-    if (entry.IsIncomingReset()) {
-      std::optional<TarpitEntry::IncomingResetPayload> reset =
-          entry.TakeIncomingResetPayload();
-      GRPC_DCHECK(reset.has_value());
-      HandleStreamStateChange(
-          *stream, stream->OnResetReceived(std::move(reset->status)));
-    } else if (entry.IsOutgoingReset()) {
+    if (entry.IsOutgoingReset()) {
       std::optional<TarpitEntry::OutgoingResetPayload> reset =
           entry.TakeOutgoingResetPayload();
       GRPC_DCHECK(reset.has_value());
