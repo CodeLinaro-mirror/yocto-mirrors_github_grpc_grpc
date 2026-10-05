@@ -1367,6 +1367,37 @@ TEST(CallFiltersTest, UnaryCallWithMultiStack) {
                   "f1:OnFinalize", "f2:OnFinalize"));
 }
 
+// Verifies that the first PushServerTrailingMetadata() succeeds and is
+// pulled, while a subsequent push fails and its metadata is dropped.
+TEST(CallFiltersTest, PushServerTrailingMetadataFailsIfAlreadyPushed) {
+  RefCountedPtr<Arena> arena = SimpleArenaAllocator()->MakeArena();
+  CallFilters filters(Arena::MakePooledForOverwrite<ClientMetadata>());
+  filters.Start();
+  promise_detail::Context<Arena> ctx(arena.get());
+  StrictMock<MockActivity> activity;
+  activity.Activate();
+  // First push of server trailing metadata must succeed.
+  ServerMetadataHandle first_trailers =
+      Arena::MakePooledForOverwrite<ServerMetadata>();
+  first_trailers->Set(GrpcStatusMetadata(), GRPC_STATUS_OK);
+  const StatusFlag first_push_status =
+      filters.PushServerTrailingMetadata(std::move(first_trailers));
+  EXPECT_TRUE(first_push_status.ok());
+  // Second push must fail since trailing metadata was already pushed.
+  ServerMetadataHandle second_trailers =
+      Arena::MakePooledForOverwrite<ServerMetadata>();
+  second_trailers->Set(GrpcStatusMetadata(), GRPC_STATUS_INTERNAL);
+  const StatusFlag second_push_status =
+      filters.PushServerTrailingMetadata(std::move(second_trailers));
+  EXPECT_FALSE(second_push_status.ok());
+  // The pulled trailing metadata must be the one from the first push.
+  Poll<ServerMetadataHandle> pulled_trailers =
+      filters.PullServerTrailingMetadata()();
+  ASSERT_TRUE(pulled_trailers.ready());
+  EXPECT_EQ(pulled_trailers.value()->get(GrpcStatusMetadata()), GRPC_STATUS_OK);
+  filters.Finalize(nullptr);
+}
+
 struct ChannelzFilter1 {
   struct Call {
     char c;

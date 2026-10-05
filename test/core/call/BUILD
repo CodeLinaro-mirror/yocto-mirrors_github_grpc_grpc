@@ -68,10 +68,13 @@ grpc_fuzz_test(
         "batch_builder",
         "//:call_tracer",
         "//:channelz",
+        "//:debug_location",
         "//:grpc_base",
         "//:promise",
         "//src/core:arena",
+        "//src/core:time",
         "//test/core/call/yodel:yodel_test",
+        "//test/core/end2end:cq_verifier",
     ],
 )
 
