@@ -1386,7 +1386,10 @@ TEST_P(XdsMetricsTest, SubchannelMetricsHaveLocalityAndBackendServiceLabels) {
   EdsResourceArgs args({{"locality0", CreateEndpointsForBackends(0, 1)},
                         {"locality1", CreateEndpointsForBackends(1, 2)}});
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
-  WaitForAllBackends(DEBUG_LOCATION);
+  // Use wait_for_ready, since xDS-enabled backends may not be serving yet.
+  WaitForAllBackends(DEBUG_LOCATION, /*start_index=*/0, /*stop_index=*/0,
+                     /*check_status=*/nullptr, WaitForBackendOptions(),
+                     RpcOptions().set_wait_for_ready(true));
   EXPECT_THAT(
       stats_plugin_->GetUInt64MetricValueByName(
           "grpc.subchannel.connection_attempts_succeeded",
