@@ -3261,6 +3261,9 @@ static void grpc_chttp2_config_default_keepalive_args_server(
           .value_or(g_default_server_keepalive_permit_without_calls);
 }
 
+// TODO(ritulb) [PH2][P4][CHTTP2] : Once CHTTP2 is deleted, migrate callers to
+// grpc_core::SetHttp2KeepaliveDefaultsFromChannelArgs() and
+// delete this function.
 void grpc_chttp2_config_default_keepalive_args(
     const grpc_core::ChannelArgs& channel_args, const bool is_client) {
   if (is_client) {
@@ -3270,6 +3273,9 @@ void grpc_chttp2_config_default_keepalive_args(
   }
   grpc_core::Chttp2PingAbusePolicy::SetDefaults(channel_args);
   grpc_core::Chttp2PingRatePolicy::SetDefaults(channel_args);
+  // Also update the default keepalive settings for PH2 so that callers of this
+  // function configure both CHTTP2 and PH2 transports.
+  grpc_core::SetHttp2KeepaliveDefaultsFromChannelArgs(channel_args, is_client);
 }
 
 static void init_keepalive_ping(

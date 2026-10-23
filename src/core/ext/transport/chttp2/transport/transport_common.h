@@ -21,6 +21,7 @@
 
 #include <cstdint>
 
+#include "src/core/lib/channel/channel_args.h"
 #include "src/core/util/time.h"
 
 // For an HTTP2 connection, this must be sent before the settings frame is sent.
@@ -47,6 +48,33 @@
 namespace grpc_core {
 
 Duration TarpitDuration(int min_tarpit_duration_ms, int max_tarpit_duration_ms);
+
+// Default keepalive settings for HTTP/2 transports, used when the corresponding
+// keepalive channel args (GRPC_ARG_KEEPALIVE_TIME_MS,
+// GRPC_ARG_KEEPALIVE_TIMEOUT_MS, GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS) are
+// not set on a channel. Separate defaults are maintained for client and server
+// transports. See https://github.com/grpc/grpc/blob/master/doc/keepalive.md for
+// more details.
+struct Http2KeepaliveDefaults {
+  Duration keepalive_time;
+  Duration keepalive_timeout;
+  bool keepalive_permit_without_calls = false;
+};
+
+// Returns the default keepalive settings for client or server transports.
+Http2KeepaliveDefaults GetHttp2KeepaliveDefaults(bool is_client);
+
+// Overwrites the default keepalive settings for client or server transports.
+// For use in tests to restore saved defaults.
+void TestOnlySetHttp2KeepaliveDefaults(const Http2KeepaliveDefaults& defaults,
+                                       bool is_client);
+
+// Updates the default keepalive settings for client or server transports from
+// channel_args. Only the keepalive args present in channel_args are updated;
+// any unset arg keeps its current default value. Must be called at process
+// initialization before any transport is created.
+void SetHttp2KeepaliveDefaultsFromChannelArgs(const ChannelArgs& channel_args,
+                                              bool is_client);
 
 namespace http2 {
 enum class WritableStreamPriority : uint8_t {

@@ -23,6 +23,7 @@
 #include "src/core/ext/transport/chttp2/transport/legacy_frame.h"
 #include "src/core/ext/transport/chttp2/transport/ping_abuse_policy.h"
 #include "src/core/ext/transport/chttp2/transport/ping_rate_policy.h"
+#include "src/core/ext/transport/chttp2/transport/transport_common.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/event_engine/default_event_engine.h"
 #include "src/core/lib/experiments/config.h"
@@ -66,6 +67,11 @@ TEST_F(ConfigurationTest, ClientKeepaliveDefaults) {
   EXPECT_EQ(t->keepalive_permit_without_calls, false);
   EXPECT_EQ(t->ping_rate_policy.TestOnlyMaxPingsWithoutData(), 2);
   t->Orphan();
+  const Http2KeepaliveDefaults ph2_client_defaults =
+      GetHttp2KeepaliveDefaults(/*is_client=*/true);
+  EXPECT_EQ(ph2_client_defaults.keepalive_time, Duration::Infinity());
+  EXPECT_EQ(ph2_client_defaults.keepalive_timeout, Duration::Seconds(20));
+  EXPECT_EQ(ph2_client_defaults.keepalive_permit_without_calls, false);
 }
 
 TEST_F(ConfigurationTest, ClientKeepaliveExplicitArgs) {
@@ -104,6 +110,11 @@ TEST_F(ConfigurationTest, ServerKeepaliveDefaults) {
             Duration::Minutes(5));
   EXPECT_EQ(t->ping_abuse_policy.TestOnlyMaxPingStrikes(), 2);
   t->Orphan();
+  const Http2KeepaliveDefaults ph2_server_defaults =
+      GetHttp2KeepaliveDefaults(/*is_client=*/false);
+  EXPECT_EQ(ph2_server_defaults.keepalive_time, Duration::Hours(2));
+  EXPECT_EQ(ph2_server_defaults.keepalive_timeout, Duration::Seconds(20));
+  EXPECT_EQ(ph2_server_defaults.keepalive_permit_without_calls, false);
 }
 
 TEST_F(ConfigurationTest, ServerKeepaliveExplicitArgs) {
@@ -157,6 +168,13 @@ TEST_F(ConfigurationTest, ModifyClientDefaults) {
   EXPECT_EQ(t->keepalive_permit_without_calls, true);
   EXPECT_EQ(t->ping_rate_policy.TestOnlyMaxPingsWithoutData(), 3);
   t->Orphan();
+  // Verify that grpc_chttp2_config_default_keepalive_args() also updates the
+  // PH2 keepalive defaults.
+  const Http2KeepaliveDefaults ph2_client_defaults =
+      GetHttp2KeepaliveDefaults(/*is_client=*/true);
+  EXPECT_EQ(ph2_client_defaults.keepalive_time, Duration::Seconds(20));
+  EXPECT_EQ(ph2_client_defaults.keepalive_timeout, Duration::Seconds(10));
+  EXPECT_EQ(ph2_client_defaults.keepalive_permit_without_calls, true);
 }
 
 // This test modifies the defaults of the client side settings, so it would
@@ -190,6 +208,13 @@ TEST_F(ConfigurationTest, ModifyServerDefaults) {
             Duration::Seconds(20));
   EXPECT_EQ(t->ping_abuse_policy.TestOnlyMaxPingStrikes(), 0);
   t->Orphan();
+  // Verify that grpc_chttp2_config_default_keepalive_args() also updates the
+  // PH2 keepalive defaults.
+  const Http2KeepaliveDefaults ph2_server_defaults =
+      GetHttp2KeepaliveDefaults(/*is_client=*/false);
+  EXPECT_EQ(ph2_server_defaults.keepalive_time, Duration::Seconds(20));
+  EXPECT_EQ(ph2_server_defaults.keepalive_timeout, Duration::Seconds(10));
+  EXPECT_EQ(ph2_server_defaults.keepalive_permit_without_calls, true);
 }
 
 }  // namespace
